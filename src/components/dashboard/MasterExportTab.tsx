@@ -35,7 +35,9 @@ import {
 
 type SubTab = 'siswa' | 'guru' | 'laporan';
 
-export const MasterExportTab: React.FC = () => {
+export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
+  initialSubTab = 'siswa',
+}) => {
   const {
     db,
     currentStaff,
@@ -53,7 +55,11 @@ export const MasterExportTab: React.FC = () => {
   } = useSiBK();
 
   const isAdmin = currentStaff?.role === 'admin';
-  const [subTab, setSubTab] = useState<SubTab>('siswa');
+  const [subTab, setSubTab] = useState<SubTab>(initialSubTab);
+
+  React.useEffect(() => {
+    setSubTab(initialSubTab);
+  }, [initialSubTab]);
   const [reportMonth, setReportMonth] = useState<string>(getTodayISO().slice(0, 7));
   const [confirmReset, setConfirmReset] = useState(false);
 

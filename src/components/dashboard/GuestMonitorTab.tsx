@@ -27,6 +27,7 @@ import { GuestQrScannerModal } from '../GuestQrScannerModal';
 export const GuestMonitorTab: React.FC = () => {
   const {
     db,
+    settings,
     markGuestCompleted,
     completeGuestsBulk,
     deleteGuests,
@@ -257,14 +258,16 @@ export const GuestMonitorTab: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start">
-          <button
-            type="button"
-            onClick={() => setQrScannerOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/60 px-3.5 py-2 text-xs sm:text-sm font-semibold text-teal-800 dark:text-teal-200 hover:bg-teal-100 dark:hover:bg-teal-900/60"
-          >
-            <QrCode className="w-4 h-4" />
-            <span>Scan QR Tamu</span>
-          </button>
+          {settings.enableQrScanner && (
+            <button
+              type="button"
+              onClick={() => setQrScannerOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/60 px-3.5 py-2 text-xs sm:text-sm font-semibold text-teal-800 dark:text-teal-200 hover:bg-teal-100 dark:hover:bg-teal-900/60"
+            >
+              <QrCode className="w-4 h-4" />
+              <span>Scan QR Tamu</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setImportModalOpen(true)}
@@ -659,7 +662,11 @@ export const GuestMonitorTab: React.FC = () => {
                       {g.nama}
                     </option>
                   ))}
-                  <option value="Wakil Kepala Sekolah">Wakil Kepala Sekolah</option>
+                  {settings.extraGuestTargets.map((extra) => (
+                    <option key={extra} value={extra}>
+                      {extra}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -820,6 +827,7 @@ export const GuestMonitorTab: React.FC = () => {
         onClose={() => setQrScannerOpen(false)}
         defaultCounselor={db.staff[0]?.nama || 'Guru BK'}
         mode="staff"
+        defaultAutoSubmit={settings.defaultQrAutoCheckIn}
         onCheckInParsed={handleQrCheckInParsed}
         onTicketQrScanned={handleTicketQrScanned}
       />

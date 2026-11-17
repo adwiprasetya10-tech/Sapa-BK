@@ -25,14 +25,26 @@ import {
   ParsedGuestQrCheckIn,
 } from '../utils/guestQr';
 import { SIBK_THEMES } from '../utils/themeRegistry';
+import { BrandLogo } from './BrandLogo';
 import { GuestQrScannerModal } from './GuestQrScannerModal';
 import { ThemeSwitcher } from './ThemeSwitcher';
 
 type GatewayTab = 'siswa' | 'staff' | 'tamu';
 
 export const GatewayPage: React.FC = () => {
-  const { db, theme, setTheme, loginStudent, loginStaff, registerGuestVisit } = useSiBK();
-  const [activeTab, setActiveTab] = useState<GatewayTab>('siswa');
+  const { db, theme, setTheme, settings, loginStudent, loginStaff, registerGuestVisit } =
+    useSiBK();
+  const [activeTab, setActiveTab] = useState<GatewayTab>(() => settings.defaultGatewayTab || 'siswa');
+
+  React.useEffect(() => {
+    const allowed: GatewayTab[] = [];
+    if (settings.showStudentTab) allowed.push('siswa');
+    if (settings.showStaffTab) allowed.push('staff');
+    if (settings.showGuestTab) allowed.push('tamu');
+    if (allowed.length > 0 && !allowed.includes(activeTab)) {
+      setActiveTab(allowed[0]);
+    }
+  }, [activeTab, settings.showGuestTab, settings.showStaffTab, settings.showStudentTab]);
 
   const [nis, setNis] = useState('');
   const [nisn, setNisn] = useState('');
@@ -203,9 +215,19 @@ export const GatewayPage: React.FC = () => {
 
   const staffOptions = [
     ...db.staff.map((s) => `${s.nama}`),
-    'Wakil Kepala Sekolah Bidang Kesiswaan',
-    'Tata Usaha / Administrasi Sekolah',
+    ...settings.extraGuestTargets,
   ];
+
+  const enabledTabsCount =
+    (settings.showStudentTab ? 1 : 0) +
+    (settings.showStaffTab ? 1 : 0) +
+    (settings.showGuestTab ? 1 : 0);
+  const tabGridClass =
+    enabledTabsCount === 3
+      ? 'grid-cols-3'
+      : enabledTabsCount === 2
+        ? 'grid-cols-2'
+        : 'grid-cols-1';
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -213,35 +235,38 @@ export const GatewayPage: React.FC = () => {
       <header className="no-print bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-4 sm:px-8 py-3.5 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl sibk-gradient-hero text-white flex items-center justify-center shadow-sm shrink-0">
-              <ShieldCheck className="w-5 h-5" />
-            </div>
+            <BrandLogo size="md" />
             <div>
               <span className="font-display font-bold text-lg tracking-tight text-slate-900 dark:text-white whitespace-nowrap">
-                SiBK
+                {settings.appName}
               </span>
               <span className="hidden md:inline text-slate-300 dark:text-slate-700 mx-2" aria-hidden="true">
                 |
               </span>
               <span className="hidden md:inline text-sm text-slate-600 dark:text-slate-300 font-medium">
-                Sistem Informasi Bimbingan Konseling & Buku Tamu Digital
+                {settings.appTagline}
               </span>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             <span className="hidden sm:inline text-xs font-medium text-slate-500 dark:text-slate-400">
-              SMA Negeri Nusantara Harapan
+              {settings.schoolName}
             </span>
-            <ThemeSwitcher />
+            {settings.showThemeSwitcher && <ThemeSwitcher />}
           </div>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-10">
-        <div className="max-w-6xl w-full grid grid-cols-1 lg:grid-cols-12 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-xl shadow-slate-900/5 overflow-hidden">
+        <div
+          className={`${
+            settings.showHeroShowcase ? 'max-w-6xl grid-cols-1 lg:grid-cols-12' : 'max-w-2xl grid-cols-1'
+          } w-full grid bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-xl shadow-slate-900/5 overflow-hidden`}
+        >
           {/* Left Colorful Gradient Showcase Panel */}
+          {settings.showHeroShowcase && (
           <div className="no-print lg:col-span-5 sibk-gradient-hero text-white p-8 sm:p-10 flex flex-col justify-between relative overflow-hidden">
             <div
               className="absolute inset-0 opacity-20 pointer-events-none"
@@ -253,14 +278,13 @@ export const GatewayPage: React.FC = () => {
 
             <div className="relative z-10">
               <p className="text-xs font-semibold text-white/85 tracking-wide mb-3">
-                Gerbang Layanan Terpadu Sekolah
+                {settings.heroBadge}
               </p>
               <h1 className="font-display text-2xl sm:text-3xl font-bold leading-tight text-white [text-wrap:balance]">
-                Ruang Aman Konseling & Pelayanan Tamu Digital
+                {settings.heroTitle}
               </h1>
               <p className="mt-4 text-sm text-white/90 leading-relaxed">
-                Platform interaktif bagi siswa, Guru BK, dan wali murid dengan pilihan tema
-                tampilan modern serta manajemen data lengkap (pilih, edit, hapus, ekspor, impor).
+                {settings.heroDescription}
               </p>
 
               <div className="mt-7 space-y-3.5 border-t border-white/20 pt-6">
@@ -332,80 +356,89 @@ export const GatewayPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 pt-2 border-t border-white/15">
-                <div>
-                  <div className="flex items-center gap-1.5 text-xs text-white/80">
-                    <Users className="w-3.5 h-3.5" />
-                    <span>Guru BK Tersedia</span>
+              {settings.showStatsOnGateway && (
+                <div className="grid grid-cols-2 gap-4 pt-2 border-t border-white/15">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-xs text-white/80">
+                      <Users className="w-3.5 h-3.5" />
+                      <span>Guru BK Tersedia</span>
+                    </div>
+                    <p className="mt-1 text-xl font-bold font-mono-tabular text-white">
+                      {availableCounselors} / {db.staff.length}
+                    </p>
                   </div>
-                  <p className="mt-1 text-xl font-bold font-mono-tabular text-white">
-                    {availableCounselors} / {db.staff.length}
-                  </p>
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5 text-xs text-white/80">
-                    <Clock className="w-3.5 h-3.5" />
-                    <span>Tamu Hari Ini</span>
+                  <div>
+                    <div className="flex items-center gap-1.5 text-xs text-white/80">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Tamu Hari Ini</span>
+                    </div>
+                    <p className="mt-1 text-xl font-bold font-mono-tabular text-white">
+                      {todayGuestCount} Kunjungan
+                    </p>
                   </div>
-                  <p className="mt-1 text-xl font-bold font-mono-tabular text-white">
-                    {todayGuestCount} Kunjungan
-                  </p>
                 </div>
-              </div>
+              )}
             </div>
           </div>
+          )}
 
           {/* Right Interactive Tab Panel */}
-          <div className="lg:col-span-7 p-6 sm:p-10 flex flex-col justify-between bg-white dark:bg-slate-900">
+          <div className={`${settings.showHeroShowcase ? 'lg:col-span-7' : ''} p-6 sm:p-10 flex flex-col justify-between bg-white dark:bg-slate-900`}>
             <div>
-              {/* 3 Main Segmented Tabs */}
+              {/* Segmented Tabs */}
               <div
-                className="no-print grid grid-cols-3 gap-1.5 p-1.5 bg-slate-100 dark:bg-slate-800 rounded-2xl mb-8"
+                className={`no-print grid ${tabGridClass} gap-1.5 p-1.5 bg-slate-100 dark:bg-slate-800 rounded-2xl mb-8`}
                 role="tablist"
-                aria-label="Pilih akses masuk SiBK"
+                aria-label="Pilih akses masuk"
               >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'siswa'}
-                  onClick={() => setActiveTab('siswa')}
-                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
-                    activeTab === 'siswa'
-                      ? 'sibk-btn-primary shadow-sm'
-                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <GraduationCap className="w-4 h-4 shrink-0" />
-                  <span>Login Siswa</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'staff'}
-                  onClick={() => setActiveTab('staff')}
-                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
-                    activeTab === 'staff'
-                      ? 'sibk-btn-primary shadow-sm'
-                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <UserCheck className="w-4 h-4 shrink-0" />
-                  <span className="truncate">Guru BK / Admin</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'tamu'}
-                  onClick={() => setActiveTab('tamu')}
-                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
-                    activeTab === 'tamu'
-                      ? 'sibk-btn-primary shadow-sm'
-                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <BookOpenCheck className="w-4 h-4 shrink-0" />
-                  <span>Buku Tamu</span>
-                </button>
+                {settings.showStudentTab && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'siswa'}
+                    onClick={() => setActiveTab('siswa')}
+                    className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
+                      activeTab === 'siswa'
+                        ? 'sibk-btn-primary shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <GraduationCap className="w-4 h-4 shrink-0" />
+                    <span>Login Siswa</span>
+                  </button>
+                )}
+                {settings.showStaffTab && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'staff'}
+                    onClick={() => setActiveTab('staff')}
+                    className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
+                      activeTab === 'staff'
+                        ? 'sibk-btn-primary shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <UserCheck className="w-4 h-4 shrink-0" />
+                    <span className="truncate">Guru BK / Admin</span>
+                  </button>
+                )}
+                {settings.showGuestTab && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'tamu'}
+                    onClick={() => setActiveTab('tamu')}
+                    className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
+                      activeTab === 'tamu'
+                        ? 'sibk-btn-primary shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <BookOpenCheck className="w-4 h-4 shrink-0" />
+                    <span>Buku Tamu</span>
+                  </button>
+                )}
               </div>
 
               {/* TAB 1: LOGIN SISWA */}
@@ -470,19 +503,21 @@ export const GatewayPage: React.FC = () => {
                     </button>
                   </form>
 
-                  <div className="mt-5 pt-5 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <button
-                      type="button"
-                      onClick={fillDemoStudent}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 px-4 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Isi Data Demo Siswa</span>
-                    </button>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Demo: Aulia Rahma Putri · XII IPA 1
-                    </p>
-                  </div>
+                  {settings.showDemoLoginButtons && (
+                    <div className="mt-5 pt-5 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={fillDemoStudent}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 px-4 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Isi Data Demo Siswa</span>
+                      </button>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Demo: Aulia Rahma Putri · XII IPA 1
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -587,29 +622,33 @@ export const GatewayPage: React.FC = () => {
                     </button>
                   </form>
 
-                  <div className="mt-5 pt-5 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      <button
-                        type="button"
-                        onClick={fillDemoGuruBK}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 px-3.5 py-2 text-xs font-semibold text-sky-800 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/50 transition-colors"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>Isi Data Demo Guru BK</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={fillDemoAdmin}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/50 px-3.5 py-2 text-xs font-semibold text-violet-800 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors"
-                      >
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                        <span>Isi Demo Admin Utama</span>
-                      </button>
+                  {settings.showDemoLoginButtons && (
+                    <div className="mt-5 pt-5 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={fillDemoGuruBK}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 px-3.5 py-2 text-xs font-semibold text-sky-800 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/50 transition-colors"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Isi Data Demo Guru BK</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={fillDemoAdmin}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/50 px-3.5 py-2 text-xs font-semibold text-violet-800 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <span>Isi Demo Admin Utama</span>
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Tersedia {db.staff.length} akun Guru BK terdaftar (sandi demo:{' '}
+                        <span className="font-mono-tabular font-semibold">123</span>). Pilih nama
+                        pada daftar di atas atau klik tombol demo.
+                      </p>
                     </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Tersedia 7 akun Guru BK terdaftar (sandi demo: <span className="font-mono-tabular font-semibold">123</span>). Pilih nama pada daftar di atas atau klik tombol demo.
-                    </p>
-                  </div>
+                  )}
                 </div>
               )}
 
@@ -622,43 +661,49 @@ export const GatewayPage: React.FC = () => {
                         Buku Tamu Digital (Tanpa Akun)
                       </h2>
                       <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                        Isi formulir atau pindai QR Code tamu untuk check-in instan.
+                        {settings.enableQrScanner
+                          ? 'Isi formulir atau pindai QR Code tamu untuk check-in instan.'
+                          : 'Registrasi cepat untuk Orang Tua/Wali Murid, Tamu Instansi, Alumni, atau Umum.'}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setQrScannerOpen(true)}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/60 px-4 py-2.5 text-xs font-bold text-teal-800 dark:text-teal-200 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition-colors shrink-0 shadow-2xs"
-                    >
-                      <QrCode className="w-4 h-4" />
-                      <span>Scan QR Check-In</span>
-                    </button>
+                    {settings.enableQrScanner && (
+                      <button
+                        type="button"
+                        onClick={() => setQrScannerOpen(true)}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/60 px-4 py-2.5 text-xs font-bold text-teal-800 dark:text-teal-200 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition-colors shrink-0 shadow-2xs"
+                      >
+                        <QrCode className="w-4 h-4" />
+                        <span>Scan QR Check-In</span>
+                      </button>
+                    )}
                   </div>
 
                   {/* Quick Walk-In QR Check-in Strip */}
-                  <div className="mb-4 rounded-2xl border border-teal-200/80 dark:border-teal-800/70 bg-gradient-to-r from-teal-50/80 via-emerald-50/70 to-sky-50/70 dark:from-teal-950/40 dark:via-emerald-950/30 dark:to-sky-950/30 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 flex items-center justify-center shrink-0">
-                        <Camera className="w-4 h-4" />
+                  {settings.enableQrScanner && (
+                    <div className="mb-4 rounded-2xl border border-teal-200/80 dark:border-teal-800/70 bg-gradient-to-r from-teal-50/80 via-emerald-50/70 to-sky-50/70 dark:from-teal-950/40 dark:via-emerald-950/30 dark:to-sky-950/30 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 flex items-center justify-center shrink-0">
+                          <Camera className="w-4 h-4" />
+                        </div>
+                        <div className="text-xs">
+                          <p className="font-bold text-slate-900 dark:text-white">
+                            Punya Kartu Undangan / QR Tamu?
+                          </p>
+                          <p className="text-slate-600 dark:text-slate-300">
+                            Scan kode QR lewat kamera atau unggah gambar QR agar data terisi otomatis.
+                          </p>
+                        </div>
                       </div>
-                      <div className="text-xs">
-                        <p className="font-bold text-slate-900 dark:text-white">
-                          Punya Kartu Undangan / QR Tamu?
-                        </p>
-                        <p className="text-slate-600 dark:text-slate-300">
-                          Scan kode QR lewat kamera atau unggah gambar QR agar data terisi otomatis.
-                        </p>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setQrScannerOpen(true)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl sibk-btn-primary px-3.5 py-2 text-xs font-semibold shrink-0"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        <span>Buka Pemindai QR</span>
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setQrScannerOpen(true)}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-xl sibk-btn-primary px-3.5 py-2 text-xs font-semibold shrink-0"
-                    >
-                      <QrCode className="w-3.5 h-3.5" />
-                      <span>Buka Pemindai QR</span>
-                    </button>
-                  </div>
+                  )}
 
                   {qrAutoFilledNotice && (
                     <div className="mb-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 px-3.5 py-2.5 text-xs font-medium text-emerald-800 dark:text-emerald-200 flex items-center gap-2">
@@ -821,11 +866,11 @@ export const GatewayPage: React.FC = () => {
                           Kartu Bukti Kunjungan Digital
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400">
-                          SMA Negeri Nusantara Harapan · Layanan Terpadu BK
+                          {settings.schoolName} · Layanan Terpadu {settings.appName}
                         </p>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        {ticketQrUrl && (
+                        {settings.showQrOnGuestTicket && ticketQrUrl && (
                           <div className="bg-white rounded-xl p-1.5 border border-emerald-200 shadow-xs text-center">
                             <img
                               src={ticketQrUrl}
@@ -930,8 +975,8 @@ export const GatewayPage: React.FC = () => {
             </div>
 
             <div className="no-print mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-400">
-              <span>Data tersimpan aman secara lokal di peramban Anda</span>
-              <span className="font-mono-tabular">SiBK Terpadu</span>
+              <span>{settings.serviceHoursNote}</span>
+              <span className="font-mono-tabular">{settings.footerLabel}</span>
             </div>
           </div>
         </div>
@@ -942,6 +987,7 @@ export const GatewayPage: React.FC = () => {
         onClose={() => setQrScannerOpen(false)}
         defaultCounselor={staffOptions[0] || 'Guru BK'}
         mode="kiosk"
+        defaultAutoSubmit={settings.defaultQrAutoCheckIn}
         onCheckInParsed={handleQrCheckInParsed}
       />
     </div>

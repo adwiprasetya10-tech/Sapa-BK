@@ -42,6 +42,7 @@ export const QueueInboxTab: React.FC<QueueInboxTabProps> = ({
 }) => {
   const {
     db,
+    settings,
     currentStaff,
     scheduleRequest,
     transferRequest,
@@ -61,7 +62,7 @@ export const QueueInboxTab: React.FC<QueueInboxTabProps> = ({
   const [jadwalTanggal, setJadwalTanggal] = useState(getTodayISO());
   const [jadwalJam, setJadwalJam] = useState('12:00');
   const [ruangPertemuan, setRuangPertemuan] = useState(
-    currentStaff?.ruang || 'Ruang Konseling 1'
+    currentStaff?.ruang || settings.defaultMeetingRoom || 'Ruang Konseling 1'
   );
   const [catatanGuru, setCatatanGuru] = useState('');
 
@@ -128,7 +129,9 @@ export const QueueInboxTab: React.FC<QueueInboxTabProps> = ({
     setSchedulingReq(req);
     setJadwalTanggal(req.jadwalTanggal || getTodayISO());
     setJadwalJam(req.jadwalJam || '12:00');
-    setRuangPertemuan(req.ruangPertemuan || currentStaff?.ruang || 'Ruang Konseling 1');
+    setRuangPertemuan(
+      req.ruangPertemuan || currentStaff?.ruang || settings.defaultMeetingRoom || 'Ruang Konseling 1'
+    );
     setCatatanGuru(
       req.catatanGuru ||
         'Permohonan diterima. Silakan hadir tepat waktu sesuai jadwal ruang konseling.'

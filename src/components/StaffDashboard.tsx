@@ -7,22 +7,24 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  ShieldCheck,
+  Settings,
   X,
 } from 'lucide-react';
 import { useSiBK } from '../context/SiBKContext';
 import { CounselingRequest } from '../types/sibk';
+import { BrandLogo } from './BrandLogo';
 import { ThemeSwitcher } from './ThemeSwitcher';
 import { GuestMonitorTab } from './dashboard/GuestMonitorTab';
 import { MasterExportTab } from './dashboard/MasterExportTab';
 import { OverviewTab } from './dashboard/OverviewTab';
 import { QueueInboxTab } from './dashboard/QueueInboxTab';
+import { SettingsTab } from './dashboard/SettingsTab';
 import { StudentNotesTab } from './dashboard/StudentNotesTab';
 
-type DashboardMenu = 'overview' | 'queue' | 'notes' | 'guests' | 'master';
+type DashboardMenu = 'overview' | 'queue' | 'notes' | 'guests' | 'master' | 'settings';
 
 export const StaffDashboard: React.FC = () => {
-  const { db, currentStaff, logout, toggleStaffAvailability } = useSiBK();
+  const { db, currentStaff, settings, logout, toggleStaffAvailability } = useSiBK();
   const [activeMenu, setActiveMenu] = useState<DashboardMenu>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [prefillRequestForNote, setPrefillRequestForNote] =
@@ -51,7 +53,10 @@ export const StaffDashboard: React.FC = () => {
       id: 'queue',
       label: 'Kotak Masuk & Antrean',
       icon: <Inbox className="w-4 h-4 shrink-0" />,
-      badge: pendingQueueCount > 0 ? pendingQueueCount : undefined,
+      badge:
+        settings.showSidebarQueueBadge && pendingQueueCount > 0
+          ? pendingQueueCount
+          : undefined,
     },
     {
       id: 'notes',
@@ -67,6 +72,11 @@ export const StaffDashboard: React.FC = () => {
       id: 'master',
       label: 'Data Master & Ekspor/Impor',
       icon: <Database className="w-4 h-4 shrink-0" />,
+    },
+    {
+      id: 'settings',
+      label: 'Pengaturan Web & Sistem',
+      icon: <Settings className="w-4 h-4 shrink-0" />,
     },
   ];
 
@@ -89,12 +99,10 @@ export const StaffDashboard: React.FC = () => {
       <aside className="no-print hidden lg:flex lg:w-[272px] lg:flex-col lg:fixed lg:inset-y-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 z-30">
         {/* Brand */}
         <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl sibk-gradient-hero text-white flex items-center justify-center shrink-0 shadow-xs">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
+          <BrandLogo size="md" />
           <div className="min-w-0">
-            <span className="font-display font-bold text-base text-slate-900 dark:text-white block leading-tight">
-              SiBK Panel
+            <span className="font-display font-bold text-base text-slate-900 dark:text-white block leading-tight truncate">
+              {settings.appName} Panel
             </span>
             <span className="text-xs text-slate-500 dark:text-slate-400 block truncate">
               {isAdmin ? 'Admin Utama BK' : 'Portal Guru BK'}
@@ -185,12 +193,10 @@ export const StaffDashboard: React.FC = () => {
           />
           <div className="relative w-72 max-w-[85vw] bg-white dark:bg-slate-900 h-full flex flex-col z-10 shadow-xl">
             <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg sibk-gradient-hero text-white flex items-center justify-center">
-                  <ShieldCheck className="w-4 h-4" />
-                </div>
-                <span className="font-display font-bold text-slate-900 dark:text-white">
-                  SiBK Panel
+              <div className="flex items-center gap-2.5 min-w-0">
+                <BrandLogo size="sm" />
+                <span className="font-display font-bold text-slate-900 dark:text-white truncate">
+                  {settings.appName} Panel
                 </span>
               </div>
               <button
@@ -261,7 +267,7 @@ export const StaffDashboard: React.FC = () => {
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-2 text-xs sm:text-sm text-slate-500 dark:text-slate-400 truncate">
-              <span className="hidden sm:inline">SiBK</span>
+              <span className="hidden sm:inline">{settings.appName}</span>
               <span className="hidden sm:inline text-slate-300 dark:text-slate-700" aria-hidden="true">
                 /
               </span>
@@ -271,8 +277,21 @@ export const StaffDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
-            <ThemeSwitcher />
+          <div className="flex items-center gap-2.5 shrink-0">
+            {settings.showThemeSwitcher && <ThemeSwitcher />}
+            <button
+              type="button"
+              onClick={() => handleSelectMenu('settings')}
+              title="Pengaturan Web & Sistem"
+              aria-label="Buka Pengaturan Web & Sistem"
+              className={`p-2 rounded-xl border transition-colors ${
+                activeMenu === 'settings'
+                  ? 'sibk-btn-primary border-transparent shadow-xs'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
+              }`}
+            >
+              <Settings className="w-4 h-4" />
+            </button>
             <div className="hidden md:flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
               <span>{isAdmin ? 'Admin Utama' : 'Guru BK'}</span>
               <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
@@ -301,6 +320,7 @@ export const StaffDashboard: React.FC = () => {
           )}
           {activeMenu === 'guests' && <GuestMonitorTab />}
           {activeMenu === 'master' && <MasterExportTab />}
+          {activeMenu === 'settings' && <SettingsTab />}
         </main>
       </div>
     </div>

@@ -29,6 +29,7 @@ interface GuestQrScannerModalProps {
   onClose: () => void;
   defaultCounselor: string;
   mode?: 'kiosk' | 'staff';
+  defaultAutoSubmit?: boolean;
   onCheckInParsed: (data: ParsedGuestQrCheckIn, autoSubmit: boolean) => void;
   onTicketQrScanned?: (nomorAntrean: string, id?: string) => void;
 }
@@ -38,11 +39,18 @@ export const GuestQrScannerModal: React.FC<GuestQrScannerModalProps> = ({
   onClose,
   defaultCounselor,
   mode = 'kiosk',
+  defaultAutoSubmit = true,
   onCheckInParsed,
   onTicketQrScanned,
 }) => {
   const [activeTab, setActiveTab] = useState<ScannerTab>('camera');
-  const [autoSubmit, setAutoSubmit] = useState<boolean>(true);
+  const [autoSubmit, setAutoSubmit] = useState<boolean>(defaultAutoSubmit);
+
+  useEffect(() => {
+    if (open) {
+      setAutoSubmit(defaultAutoSubmit);
+    }
+  }, [open, defaultAutoSubmit]);
   const [cameraState, setCameraState] = useState<
     'idle' | 'starting' | 'active' | 'error'
   >('idle');

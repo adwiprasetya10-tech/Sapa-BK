@@ -14,6 +14,7 @@ import {
 import { useSiBK } from '../context/SiBKContext';
 import { formatTanggalID } from '../data/seedData';
 import { CounselingCategory, UrgencyLevel } from '../types/sibk';
+import { BrandLogo } from './BrandLogo';
 import { ThemeSwitcher } from './ThemeSwitcher';
 
 const SERVICE_CATEGORIES: CounselingCategory[] = [
@@ -25,10 +26,11 @@ const SERVICE_CATEGORIES: CounselingCategory[] = [
   'Permohonan Surat/Izin',
 ];
 
-const URGENCY_LEVELS: UrgencyLevel[] = ['Normal', 'Segera', 'Mendesak (Rahasia)'];
-
 export const StudentPortal: React.FC = () => {
-  const { db, currentStudent, logout, submitCounselingRequest } = useSiBK();
+  const { db, settings, currentStudent, logout, submitCounselingRequest } = useSiBK();
+  const urgencyLevels: UrgencyLevel[] = settings.allowSecretUrgency
+    ? ['Normal', 'Segera', 'Mendesak (Rahasia)']
+    : ['Normal', 'Segera'];
 
   const counselors = db.staff.filter((s) => s.role === 'guru_bk' || s.role === 'admin');
   const defaultCounselor =
@@ -81,13 +83,7 @@ export const StudentPortal: React.FC = () => {
       <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-8 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
-            <div className="w-11 h-11 rounded-xl sibk-gradient-hero text-white flex items-center justify-center font-display font-bold text-base shrink-0 shadow-xs">
-              {currentStudent.nama
-                .split(' ')
-                .slice(0, 2)
-                .map((w) => w[0])
-                .join('')}
-            </div>
+            <BrandLogo size="md" />
             <div>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <h1 className="font-display text-base sm:text-lg font-bold text-slate-900 dark:text-white">
@@ -104,6 +100,8 @@ export const StudentPortal: React.FC = () => {
                 <span>NIS: {currentStudent.nis}</span>
                 <span aria-hidden="true">·</span>
                 <span>NISN: {currentStudent.nisn}</span>
+                <span aria-hidden="true">·</span>
+                <span className="font-sans">{settings.schoolName}</span>
                 {myAdvisor && (
                   <>
                     <span aria-hidden="true">·</span>
@@ -115,7 +113,7 @@ export const StudentPortal: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2.5 self-end sm:self-center">
-            <ThemeSwitcher />
+            {settings.showThemeSwitcher && <ThemeSwitcher />}
             <div className="hidden md:flex items-center gap-1.5 text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-xl font-medium">
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>Privasi Terjaga</span>
@@ -192,8 +190,8 @@ export const StudentPortal: React.FC = () => {
               <span className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1.5">
                 Tingkat Urgensi
               </span>
-              <div className="grid grid-cols-3 gap-2">
-                {URGENCY_LEVELS.map((lvl) => {
+              <div className={`grid ${urgencyLevels.length === 3 ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
+                {urgencyLevels.map((lvl) => {
                   const active = tingkatUrgensi === lvl;
                   const isMendesak = lvl === 'Mendesak (Rahasia)';
                   const isSegera = lvl === 'Segera';

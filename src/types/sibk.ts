@@ -133,3 +133,51 @@ export interface SiBKDatabase {
   guests: GuestVisit[];
   activities: ActivityLog[];
 }
+
+export type WebLogoPreset = 'shield' | 'graduation' | 'heart' | 'sparkles' | 'school';
+export type WebLogoRounded = 'rounded-xl' | 'rounded-full' | 'rounded-md';
+export type FontPreset = 'modern' | 'classic' | 'formal';
+
+export interface AppSettings {
+  // 1. Identitas & Logo Web
+  appName: string;
+  appTagline: string;
+  schoolName: string;
+  schoolAddress: string;
+  schoolContact: string;
+  footerLabel: string;
+  webLogoDataUrl: string | null;
+  webLogoPreset: WebLogoPreset;
+  webLogoRounded: WebLogoRounded;
+  showWebLogoContainerBg: boolean;
+  faviconSync: boolean;
+
+  // 2. Halaman Depan / Gerbang Masuk
+  defaultGatewayTab: 'siswa' | 'staff' | 'tamu';
+  showStudentTab: boolean;
+  showStaffTab: boolean;
+  showGuestTab: boolean;
+  showHeroShowcase: boolean;
+  heroBadge: string;
+  heroTitle: string;
+  heroDescription: string;
+  showDemoLoginButtons: boolean;
+  showThemeSwitcher: boolean;
+  showStatsOnGateway: boolean;
+
+  // 3. Layanan Konseling & Buku Tamu
+  guestQueuePrefix: string;
+  defaultMeetingRoom: string;
+  enableQrScanner: boolean;
+  showQrOnGuestTicket: boolean;
+  defaultQrAutoCheckIn: boolean;
+  extraGuestTargets: string[];
+  allowSecretUrgency: boolean;
+  serviceHoursNote: string;
+
+  // 4. Tampilan Global
+  fontPreset: FontPreset;
+  showSidebarQueueBadge: boolean;
+}
+
+

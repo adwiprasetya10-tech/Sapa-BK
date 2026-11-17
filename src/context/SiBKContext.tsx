@@ -6,6 +6,7 @@ import {
 } from '../data/seedData';
 import {
   ActivityLog,
+  AppSettings,
   AppThemeId,
   AuthSession,
   AvailabilityStatus,
@@ -21,6 +22,12 @@ import {
   UrgencyLevel,
   VisitorCategory,
 } from '../types/sibk';
+import {
+  DEFAULT_APP_SETTINGS,
+  loadAppSettings,
+  saveAppSettings,
+  SETTINGS_STORAGE_KEY,
+} from '../utils/appSettings';
 import { getThemeMeta } from '../utils/themeRegistry';
 
 const DB_STORAGE_KEY = 'sibk_database_v2';
@@ -32,6 +39,10 @@ interface SiBKContextValue {
   session: AuthSession;
   theme: AppThemeId;
   setTheme: (themeId: AppThemeId) => void;
+  settings: AppSettings;
+  updateSettings: (updates: Partial<AppSettings>, silent?: boolean) => void;
+  replaceSettings: (next: AppSettings) => void;
+  resetSettings: () => void;
   currentStudent: Student | null;
   currentStaff: StaffUser | null;
   toasts: ToastMessage[];
@@ -156,6 +167,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [db, setDb] = useState<SiBKDatabase>(() => loadDatabase());
   const [session, setSession] = useState<AuthSession>(() => loadSession());
   const [theme, setThemeState] = useState<AppThemeId>(() => loadTheme());
+  const [settings, setSettings] = useState<AppSettings>(() => loadAppSettings());
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   useEffect(() => {
@@ -195,10 +207,42 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [session]);
 
   useEffect(() => {
+    saveAppSettings(settings);
+    document.title = settings.appTagline
+      ? `${settings.appName} — ${settings.appTagline}`
+      : `${settings.appName} — ${settings.schoolName}`;
+    document.documentElement.setAttribute('data-font', settings.fontPreset);
+
+    if (settings.faviconSync) {
+      let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
+      if (settings.webLogoDataUrl) {
+        link.href = settings.webLogoDataUrl;
+      } else {
+        const themeColors = getThemeMeta(theme).swatchColors;
+        const initial = (settings.appName || 'S').trim().charAt(0).toUpperCase();
+        const svgFavicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${themeColors[0]}"/><stop offset="100%" stop-color="${themeColors[1]}"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><text x="32" y="42" text-anchor="middle" font-family="sans-serif" font-size="30" font-weight="800" fill="#ffffff">${initial}</text></svg>`;
+        link.href = `data:image/svg+xml;utf8,${encodeURIComponent(svgFavicon)}`;
+      }
+    }
+  }, [settings, theme]);
+
+  useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
       if (e.key === DB_STORAGE_KEY && e.newValue) {
         try {
           setDb(JSON.parse(e.newValue));
+        } catch {
+          // ignore
+        }
+      }
+      if (e.key === SETTINGS_STORAGE_KEY && e.newValue) {
+        try {
+          setSettings({ ...DEFAULT_APP_SETTINGS, ...JSON.parse(e.newValue) });
         } catch {
           // ignore
         }
@@ -232,6 +276,46 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     },
     [pushToast]
   );
+
+  const updateSettings = useCallback(
+    (updates: Partial<AppSettings>, silent = true) => {
+      setSettings((prev) => ({ ...prev, ...updates }));
+      if (!silent) {
+        pushToast({
+          type: 'success',
+          title: 'Pengaturan Sistem Disimpan',
+          message: 'Perubahan diterapkan ke seluruh halaman secara langsung.',
+        });
+      }
+    },
+    [pushToast]
+  );
+
+  const replaceSettings = useCallback(
+    (next: AppSettings) => {
+      setSettings(next);
+      pushToast({
+        type: 'success',
+        title: 'Pengaturan Diperbarui',
+        message: 'Konfigurasi aplikasi telah diterapkan.',
+      });
+    },
+    [pushToast]
+  );
+
+  const resetSettings = useCallback(() => {
+    setSettings(DEFAULT_APP_SETTINGS);
+    try {
+      localStorage.removeItem(SETTINGS_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+    pushToast({
+      type: 'info',
+      title: 'Pengaturan Direset ke Default',
+      message: 'Logo web, identitas, dan konfigurasi dikembalikan ke setelan awal.',
+    });
+  }, [pushToast]);
 
   const currentStudent =
     session?.type === 'student'
@@ -676,7 +760,9 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }): GuestVisit => {
       const today = getTodayISO();
       const todayCount = db.guests.filter((g) => g.tanggal === today).length + 1;
-      const nomorAntrean = `TM-${String(todayCount).padStart(3, '0')}`;
+      const rawPrefix = (settings.guestQueuePrefix || 'TM-').trim().toUpperCase();
+      const prefix = rawPrefix.endsWith('-') ? rawPrefix : `${rawPrefix}-`;
+      const nomorAntrean = `${prefix}${String(todayCount).padStart(3, '0')}`;
       const visit: GuestVisit = {
         id: uid('gst'),
         nomorAntrean,
@@ -710,7 +796,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return visit;
     },
-    [db.guests, pushToast]
+    [db.guests, pushToast, settings.guestQueuePrefix]
   );
 
   const updateGuestVisit = useCallback(
@@ -1029,7 +1115,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       return rows.length;
     },
-    [currentStaff, pushToast]
+    [currentStaff, pushToast, settings.guestQueuePrefix]
   );
 
   const importGuests = useCallback(
@@ -1039,12 +1125,14 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ): number => {
       const today = getTodayISO();
       const nowTime = getCurrentTimeHHMM();
+      const rawPrefix = (settings.guestQueuePrefix || 'TM-').trim().toUpperCase();
+      const prefix = rawPrefix.endsWith('-') ? rawPrefix : `${rawPrefix}-`;
       setDb((prev) => {
         const baseCount =
           mode === 'replace' ? 0 : prev.guests.filter((g) => g.tanggal === today).length;
         const imported: GuestVisit[] = rows.map((r, idx) => ({
           id: uid('gst'),
-          nomorAntrean: `TM-${String(baseCount + idx + 1).padStart(3, '0')}`,
+          nomorAntrean: `${prefix}${String(baseCount + idx + 1).padStart(3, '0')}`,
           namaLengkap: r.namaLengkap,
           kategori: r.kategori,
           namaSiswaTerkait: r.namaSiswaTerkait,
@@ -1074,7 +1162,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       return rows.length;
     },
-    [currentStaff, pushToast]
+    [currentStaff, pushToast, settings.guestQueuePrefix]
   );
 
   const importFullBackup = useCallback(
@@ -1140,6 +1228,10 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         session,
         theme,
         setTheme,
+        settings,
+        updateSettings,
+        replaceSettings,
+        resetSettings,
         currentStudent,
         currentStaff,
         toasts,
