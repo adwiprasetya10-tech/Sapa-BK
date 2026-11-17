@@ -1,0 +1,182 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-display: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+    /* Default Aurora Teal & Emerald Theme Variables */
+    --sibk-bg: #f4fbf9;
+    --sibk-surface: #ffffff;
+    --sibk-surface-alt: #eef8f5;
+    --sibk-border: #d8ece6;
+    --sibk-text: #0f172a;
+    --sibk-muted: #475569;
+    --sibk-primary: #0f766e;
+    --sibk-primary-hover: #115e59;
+    --sibk-secondary: #10b981;
+    --sibk-accent-soft: #ccfbf1;
+    --sibk-accent-text: #0f766e;
+    --sibk-hero-from: #0f766e;
+    --sibk-hero-via: #059669;
+    --sibk-hero-to: #0891b2;
+  }
+
+  [data-theme='aurora'] {
+    --sibk-bg: #f4fbf9;
+    --sibk-surface: #ffffff;
+    --sibk-surface-alt: #ecf9f5;
+    --sibk-border: #d5ece5;
+    --sibk-text: #0f172a;
+    --sibk-muted: #475569;
+    --sibk-primary: #0f766e;
+    --sibk-primary-hover: #115e59;
+    --sibk-secondary: #10b981;
+    --sibk-accent-soft: #ccfbf1;
+    --sibk-accent-text: #0f766e;
+    --sibk-hero-from: #0d9488;
+    --sibk-hero-via: #10b981;
+    --sibk-hero-to: #06b6d4;
+  }
+
+  [data-theme='sunset'] {
+    --sibk-bg: #fff8f5;
+    --sibk-surface: #ffffff;
+    --sibk-surface-alt: #fff1eb;
+    --sibk-border: #f8dcd0;
+    --sibk-text: #1c1917;
+    --sibk-muted: #57534e;
+    --sibk-primary: #e11d48;
+    --sibk-primary-hover: #be123c;
+    --sibk-secondary: #f97316;
+    --sibk-accent-soft: #ffe4e6;
+    --sibk-accent-text: #be123c;
+    --sibk-hero-from: #e11d48;
+    --sibk-hero-via: #f97316;
+    --sibk-hero-to: #f59e0b;
+  }
+
+  [data-theme='indigo'] {
+    --sibk-bg: #f6f5ff;
+    --sibk-surface: #ffffff;
+    --sibk-surface-alt: #efecff;
+    --sibk-border: #ddd6fe;
+    --sibk-text: #1e1b4b;
+    --sibk-muted: #4c4675;
+    --sibk-primary: #6d28d9;
+    --sibk-primary-hover: #5b21b6;
+    --sibk-secondary: #ec4899;
+    --sibk-accent-soft: #ede9fe;
+    --sibk-accent-text: #5b21b6;
+    --sibk-hero-from: #4f46e5;
+    --sibk-hero-via: #7c3aed;
+    --sibk-hero-to: #db2777;
+  }
+
+  [data-theme='ocean'] {
+    --sibk-bg: #f3f9ff;
+    --sibk-surface: #ffffff;
+    --sibk-surface-alt: #e8f3ff;
+    --sibk-border: #cfe4fb;
+    --sibk-text: #0f172a;
+    --sibk-muted: #475569;
+    --sibk-primary: #0284c7;
+    --sibk-primary-hover: #0369a1;
+    --sibk-secondary: #2563eb;
+    --sibk-accent-soft: #e0f2fe;
+    --sibk-accent-text: #0369a1;
+    --sibk-hero-from: #2563eb;
+    --sibk-hero-via: #0284c7;
+    --sibk-hero-to: #06b6d4;
+  }
+
+  [data-theme='midnight'] {
+    --sibk-bg: #0b1120;
+    --sibk-surface: #111827;
+    --sibk-surface-alt: #1e293b;
+    --sibk-border: #283548;
+    --sibk-text: #f1f5f9;
+    --sibk-muted: #94a3b8;
+    --sibk-primary: #14b8a6;
+    --sibk-primary-hover: #0d9488;
+    --sibk-secondary: #8b5cf6;
+    --sibk-accent-soft: #134e4a;
+    --sibk-accent-text: #5eead4;
+    --sibk-hero-from: #0f766e;
+    --sibk-hero-via: #6366f1;
+    --sibk-hero-to: #ec4899;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--sibk-bg);
+    color: var(--sibk-text);
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-mono-tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.sibk-gradient-hero {
+  background: linear-gradient(135deg, var(--sibk-hero-from) 0%, var(--sibk-hero-via) 52%, var(--sibk-hero-to) 100%);
+}
+
+.sibk-btn-primary {
+  background: linear-gradient(135deg, var(--sibk-primary) 0%, var(--sibk-hero-via) 100%);
+  color: #ffffff;
+}
+
+.sibk-btn-primary:hover {
+  filter: brightness(1.06);
+}
+
+.sibk-surface {
+  background-color: var(--sibk-surface);
+  border-color: var(--sibk-border);
+  color: var(--sibk-text);
+}
+
+.sibk-surface-alt {
+  background-color: var(--sibk-surface-alt);
+  border-color: var(--sibk-border);
+}
+
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-container {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+}

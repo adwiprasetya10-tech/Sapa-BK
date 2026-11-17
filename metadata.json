@@ -1,0 +1,6 @@
+{
+  "name": "SiBK — Sistem Informasi Bimbingan Konseling & Buku Tamu Digital",
+  "description": "Aplikasi web manajemen layanan Bimbingan Konseling sekolah, catatan rekam jejak siswa, portal pengajuan siswa, dan buku tamu digital terpadu.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
