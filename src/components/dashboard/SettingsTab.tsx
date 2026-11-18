@@ -43,6 +43,7 @@ export const SettingsTab: React.FC = () => {
     resetSettings,
     theme,
     setTheme,
+    testNotificationSound,
     pushToast,
   } = useSiBK();
 
@@ -876,6 +877,44 @@ export const SettingsTab: React.FC = () => {
                   className="w-4 h-4 rounded text-teal-600"
                 />
               </label>
+
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-4 py-3 cursor-pointer">
+                <span className="text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-200">
+                  Aktifkan Notifikasi Suara (Lonceng saat chat / info kehadiran masuk)
+                </span>
+                <input
+                  type="checkbox"
+                  checked={settings.enableSoundNotification}
+                  onChange={(e) =>
+                    updateSettings({ enableSoundNotification: e.target.checked })
+                  }
+                  className="w-4 h-4 rounded text-teal-600"
+                />
+              </label>
+
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-4 py-3 cursor-pointer">
+                <span className="text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-200">
+                  Aktifkan Notifikasi Tulisan (Banner toast & pop-up pesan masuk)
+                </span>
+                <input
+                  type="checkbox"
+                  checked={settings.enableTextNotification}
+                  onChange={(e) =>
+                    updateSettings({ enableTextNotification: e.target.checked })
+                  }
+                  className="w-4 h-4 rounded text-teal-600"
+                />
+              </label>
+
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={testNotificationSound}
+                  className="inline-flex items-center gap-2 rounded-xl border border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/60 px-4 py-2 text-xs font-semibold text-teal-800 dark:text-teal-200 hover:bg-teal-100"
+                >
+                  <span>Tes Notifikasi Suara & Tulisan</span>
+                </button>
+              </div>
             </div>
           </div>
 

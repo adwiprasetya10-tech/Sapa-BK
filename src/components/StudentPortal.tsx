@@ -1,21 +1,34 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  BellRing,
   Calendar,
+  Camera,
   CheckCircle2,
+  ClipboardCheck,
   Clock,
   FileText,
   LogOut,
   MapPin,
+  Menu,
+  MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Send,
   ShieldAlert,
   ShieldCheck,
   User,
+  Volume2,
+  VolumeX,
+  X,
 } from 'lucide-react';
 import { useSiBK } from '../context/SiBKContext';
 import { formatTanggalID } from '../data/seedData';
 import { CounselingCategory, UrgencyLevel } from '../types/sibk';
 import { BrandLogo } from './BrandLogo';
 import { ThemeSwitcher } from './ThemeSwitcher';
+import { ClassSecretarySection } from './student/ClassSecretarySection';
+import { StudentAttendanceSection } from './student/StudentAttendanceSection';
+import { StudentChatSection } from './student/StudentChatSection';
 
 const SERVICE_CATEGORIES: CounselingCategory[] = [
   'Konseling Pribadi',
@@ -26,8 +39,18 @@ const SERVICE_CATEGORIES: CounselingCategory[] = [
   'Permohonan Surat/Izin',
 ];
 
+type StudentTab = 'counseling' | 'attendance' | 'chat' | 'secretary';
+
 export const StudentPortal: React.FC = () => {
-  const { db, settings, currentStudent, logout, submitCounselingRequest } = useSiBK();
+  const {
+    db,
+    settings,
+    updateSettings,
+    currentStudent,
+    logout,
+    submitCounselingRequest,
+    openStudentInfo,
+  } = useSiBK();
   const urgencyLevels: UrgencyLevel[] = settings.allowSecretUrgency
     ? ['Normal', 'Segera', 'Mendesak (Rahasia)']
     : ['Normal', 'Segera'];
@@ -38,6 +61,10 @@ export const StudentPortal: React.FC = () => {
     counselors[0]?.id ||
     '';
 
+  const [activeTab, setActiveTab] = useState<StudentTab>('counseling');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
+
   const [jenisKeperluan, setJenisKeperluan] =
     useState<CounselingCategory>('Konseling Pribadi');
   const [guruTujuanId, setGuruTujuanId] = useState(defaultCounselor);
@@ -47,6 +74,12 @@ export const StudentPortal: React.FC = () => {
   const [formError, setFormError] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('Semua');
 
+  useEffect(() => {
+    if (activeTab === 'secretary' && !currentStudent?.isSekretarisKelas) {
+      setActiveTab('counseling');
+    }
+  }, [activeTab, currentStudent?.isSekretarisKelas]);
+
   if (!currentStudent) return null;
 
   const myAdvisor = db.staff.find((g) => g.id === currentStudent.guruBkId);
@@ -55,6 +88,61 @@ export const StudentPortal: React.FC = () => {
     filterStatus === 'Semua'
       ? myRequests
       : myRequests.filter((r) => r.status === filterStatus);
+
+  const unreadChatCount = db.chats.filter(
+    (c) =>
+      c.studentId === currentStudent.id &&
+      c.senderRole === 'staff' &&
+      !c.readByStudent
+  ).length;
+
+  const navItems: {
+    id: StudentTab;
+    label: string;
+    icon: React.ReactNode;
+    badge?: number;
+    highlight?: boolean;
+  }[] = [
+    {
+      id: 'counseling',
+      label: 'Layanan Konseling',
+      icon: <FileText className="w-4 h-4 shrink-0" />,
+    },
+    {
+      id: 'attendance',
+      label: 'Info Kehadiran & Foto',
+      icon: <Camera className="w-4 h-4 shrink-0" />,
+    },
+    {
+      id: 'chat',
+      label: 'Chat Guru BK',
+      icon: <MessageSquare className="w-4 h-4 shrink-0" />,
+      badge: unreadChatCount > 0 ? unreadChatCount : undefined,
+    },
+    ...(currentStudent.isSekretarisKelas
+      ? [
+          {
+            id: 'secretary' as StudentTab,
+            label: 'Input Absensi Kelas',
+            icon: <ClipboardCheck className="w-4 h-4 shrink-0" />,
+            highlight: true,
+          },
+        ]
+      : []),
+  ];
+
+  const activeTitle =
+    navItems.find((item) => item.id === activeTab)?.label || 'Portal Siswa';
+
+  const handleSelectTab = (tab: StudentTab) => {
+    setActiveTab(tab);
+    setMobileMenuOpen(false);
+  };
+
+  const handleOpenProfile = () => {
+    setMobileMenuOpen(false);
+    openStudentInfo(currentStudent.id);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,61 +165,331 @@ export const StudentPortal: React.FC = () => {
     setTingkatUrgensi('Normal');
   };
 
-  return (
-    <div className="min-h-screen flex flex-col">
-      {/* Top Profile Header */}
-      <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-8 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <BrandLogo size="md" />
-            <div>
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                <h1 className="font-display text-base sm:text-lg font-bold text-slate-900 dark:text-white">
-                  {currentStudent.nama}
-                </h1>
-                <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
-                  ·
-                </span>
-                <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+  const renderSidebarContent = (isDrawer: boolean) => (
+    <>
+      {/* Brand */}
+      <div className="px-5 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <BrandLogo size="md" />
+          <div className="min-w-0">
+            <span className="font-display font-bold text-base text-slate-900 dark:text-white block leading-tight truncate">
+              {settings.appName} Siswa
+            </span>
+            <span className="text-xs text-slate-500 dark:text-slate-400 block truncate">
+              {settings.schoolName}
+            </span>
+          </div>
+        </div>
+        {isDrawer && (
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="Tutup menu siswa"
+            className="p-1.5 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg shrink-0"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
+      </div>
+
+      {/* Student Identity Card in Left Sidebar */}
+      <div className="px-4 pt-4">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/50 p-3.5 space-y-2">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleOpenProfile}
+              title="Klik untuk lihat informasi lengkap siswa"
+              className="w-11 h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden flex items-center justify-center shrink-0 hover:ring-2 hover:ring-teal-500 transition-all"
+            >
+              {currentStudent.linkFoto ? (
+                <img
+                  src={currentStudent.linkFoto}
+                  alt={currentStudent.nama}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <User className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+              )}
+            </button>
+            <div className="min-w-0 flex-1">
+              <button
+                type="button"
+                onClick={handleOpenProfile}
+                title="Klik untuk lihat informasi lengkap siswa"
+                className="font-display text-sm font-bold text-slate-900 dark:text-white hover:text-teal-700 dark:hover:text-teal-300 hover:underline underline-offset-2 truncate block text-left w-full"
+              >
+                {currentStudent.nama}
+              </button>
+              <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                <button
+                  type="button"
+                  onClick={handleOpenProfile}
+                  title="Klik untuk lihat informasi lengkap siswa"
+                  className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 hover:underline underline-offset-2"
+                >
                   {currentStudent.kelas}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono-tabular">
-                <span>NIS: {currentStudent.nis}</span>
-                <span aria-hidden="true">·</span>
-                <span>NISN: {currentStudent.nisn}</span>
-                <span aria-hidden="true">·</span>
-                <span className="font-sans">{settings.schoolName}</span>
-                {myAdvisor && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span className="font-sans">Pembimbing: {myAdvisor.nama}</span>
-                  </>
+                </button>
+                {currentStudent.noAbsen && (
+                  <span className="text-[10px] font-mono-tabular px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                    Absen {currentStudent.noAbsen}
+                  </span>
                 )}
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5 self-end sm:self-center">
-            {settings.showThemeSwitcher && <ThemeSwitcher />}
-            <div className="hidden md:flex items-center gap-1.5 text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-xl font-medium">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Privasi Terjaga</span>
+          <div className="text-[11px] font-mono-tabular text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-2 gap-y-0.5 pt-1 border-t border-slate-200/70 dark:border-slate-700/70">
+            <span>NIS: {currentStudent.nis}</span>
+            <span>·</span>
+            <span>NISN: {currentStudent.nisn}</span>
+          </div>
+
+          {currentStudent.isSekretarisKelas && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300">
+              <ShieldCheck className="w-3 h-3" />
+              <span>Sekretaris Kelas</span>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Navigation Links */}
+      <nav className="flex-1 px-4 py-4 space-y-1.5 overflow-y-auto" aria-label="Navigasi Portal Siswa">
+        {navItems.map((item) => {
+          const active = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => handleSelectTab(item.id)}
+              className={`w-full flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                active
+                  ? 'sibk-btn-primary shadow-sm font-semibold'
+                  : item.highlight
+                  ? 'bg-teal-50/70 dark:bg-teal-950/40 border border-teal-200/70 dark:border-teal-800/70 text-teal-800 dark:text-teal-200 hover:bg-teal-100/80 dark:hover:bg-teal-900/50'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <span className="flex items-center gap-3 min-w-0">
+                {item.icon}
+                <span className="truncate">{item.label}</span>
+              </span>
+              {item.badge !== undefined && (
+                <span
+                  className={`min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center font-mono-tabular ${
+                    active ? 'bg-white/25 text-white' : 'bg-rose-600 text-white'
+                  }`}
+                >
+                  {item.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        <button
+          type="button"
+          onClick={handleOpenProfile}
+          className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-all"
+        >
+          <User className="w-4 h-4 shrink-0" />
+          <span className="truncate">Profil Lengkap Saya</span>
+        </button>
+      </nav>
+
+      {/* Bottom Advisor Info + Privacy + Logout */}
+      <div className="p-4 border-t border-slate-100 dark:border-slate-800 space-y-3 bg-slate-50/70 dark:bg-slate-900/80">
+        {myAdvisor && (
+          <div className="text-xs">
+            <span className="block text-[11px] text-slate-500 dark:text-slate-400">
+              Guru BK Pembimbing
+            </span>
+            <span className="font-semibold text-slate-900 dark:text-white block truncate mt-0.5">
+              {myAdvisor.nama}
+            </span>
+          </div>
+        )}
+
+        <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-3 py-1.5 rounded-xl font-medium">
+          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+          <span>Privasi Konseling Terjaga</span>
+        </div>
+
+        <button
+          type="button"
+          onClick={logout}
+          className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span>Keluar Sesi</span>
+        </button>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="min-h-screen flex flex-col lg:flex-row">
+      {/* Desktop Left Sidebar (auto-hidden on HP & Tablet < lg, also collapsible on desktop) */}
+      {!desktopSidebarCollapsed && (
+        <aside className="no-print hidden lg:flex lg:w-[272px] lg:flex-col lg:fixed lg:inset-y-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 z-30">
+          {renderSidebarContent(false)}
+        </aside>
+      )}
+
+      {/* Mobile & Tablet Auto-Hide Slide-Over Drawer (< 1024px) */}
+      {mobileMenuOpen && (
+        <div className="no-print fixed inset-0 z-50 lg:hidden flex">
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-[1px]"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          <aside className="relative w-72 max-w-[85vw] bg-white dark:bg-slate-900 h-full flex flex-col z-10 shadow-2xl border-r border-slate-200 dark:border-slate-800">
+            {renderSidebarContent(true)}
+          </aside>
+        </div>
+      )}
+
+      {/* Main Content Area */}
+      <div
+        className={`flex-1 flex flex-col min-w-0 transition-all ${
+          desktopSidebarCollapsed ? 'lg:pl-0' : 'lg:pl-[272px]'
+        }`}
+      >
+        {/* Sticky Top Context Bar */}
+        <header className="no-print bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 sm:px-8 py-3.5 sticky top-0 z-20 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            {/* Hamburger Menu for HP & Tablet (auto-hide mode) */}
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className="lg:hidden relative p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0"
+              aria-label="Buka menu dashboard siswa"
+            >
+              <Menu className="w-5 h-5" />
+              {unreadChatCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-rose-600 ring-2 ring-white dark:ring-slate-900" />
+              )}
+            </button>
+
+            {/* Optional Sidebar Collapse/Expand on Desktop */}
+            <button
+              type="button"
+              onClick={() => setDesktopSidebarCollapsed((prev) => !prev)}
+              title={desktopSidebarCollapsed ? 'Tampilkan Sidebar Kiri' : 'Sembunyikan Sidebar Kiri'}
+              aria-label={desktopSidebarCollapsed ? 'Tampilkan Sidebar Kiri' : 'Sembunyikan Sidebar Kiri'}
+              className="hidden lg:inline-flex p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0"
+            >
+              {desktopSidebarCollapsed ? (
+                <PanelLeftOpen className="w-4 h-4" />
+              ) : (
+                <PanelLeftClose className="w-4 h-4" />
+              )}
+            </button>
+
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <span className="hidden sm:inline font-medium">{settings.appName}</span>
+                <span className="hidden sm:inline text-slate-300 dark:text-slate-700" aria-hidden="true">
+                  /
+                </span>
+                <span className="font-semibold text-slate-900 dark:text-white truncate">
+                  {activeTitle}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs truncate">
+                <button
+                  type="button"
+                  onClick={() => openStudentInfo(currentStudent.id)}
+                  title="Klik untuk lihat informasi lengkap siswa"
+                  className="font-semibold text-slate-700 dark:text-slate-200 hover:text-teal-700 dark:hover:text-teal-300 hover:underline underline-offset-2 truncate"
+                >
+                  {currentStudent.nama}
+                </button>
+                <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
+                  ·
+                </span>
+                <button
+                  type="button"
+                  onClick={() => openStudentInfo(currentStudent.id)}
+                  title="Klik untuk lihat informasi lengkap siswa"
+                  className="font-semibold text-emerald-700 dark:text-emerald-400 hover:underline underline-offset-2 shrink-0"
+                >
+                  {currentStudent.kelas}
+                </button>
+              </div>
             </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() =>
+                updateSettings({
+                  enableSoundNotification: !settings.enableSoundNotification,
+                })
+              }
+              title={
+                settings.enableSoundNotification
+                  ? 'Suara Notifikasi Aktif (Klik untuk senyapkan)'
+                  : 'Suara Notifikasi Senyap (Klik untuk aktifkan)'
+              }
+              aria-label="Toggle suara notifikasi"
+              className={`p-2 rounded-xl border transition-colors ${
+                settings.enableSoundNotification
+                  ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              {settings.enableSoundNotification ? (
+                <Volume2 className="w-4 h-4" />
+              ) : (
+                <VolumeX className="w-4 h-4" />
+              )}
+            </button>
+            {settings.showThemeSwitcher && <ThemeSwitcher />}
             <button
               type="button"
               onClick={logout}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="w-3.5 h-3.5" />
               <span>Keluar</span>
             </button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        {/* Main Content */}
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6">
+          {unreadChatCount > 0 && activeTab !== 'chat' && (
+            <div className="rounded-2xl border border-teal-200 dark:border-teal-800 bg-teal-50/90 dark:bg-teal-950/50 px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <BellRing className="w-5 h-5 text-teal-700 dark:text-teal-300 shrink-0" />
+                <p className="text-xs sm:text-sm font-medium text-teal-900 dark:text-teal-100">
+                  Anda memiliki <span className="font-bold">{unreadChatCount} pesan baru</span> belum dibaca dari Guru BK.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleSelectTab('chat')}
+                className="inline-flex items-center gap-1.5 rounded-xl sibk-btn-primary px-3.5 py-2 text-xs font-semibold"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                <span>Buka Chat Sekarang</span>
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'attendance' && <StudentAttendanceSection />}
+
+          {activeTab === 'chat' && <StudentChatSection />}
+
+          {activeTab === 'secretary' && currentStudent.isSekretarisKelas && (
+            <ClassSecretarySection />
+          )}
+
+          {activeTab === 'counseling' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left: Form Pengajuan Layanan */}
         <section className="lg:col-span-5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 sm:p-7 shadow-xs">
           <div className="border-b border-slate-100 dark:border-slate-800 pb-4 mb-5">
@@ -415,7 +773,10 @@ export const StudentPortal: React.FC = () => {
             )}
           </div>
         </section>
-      </main>
+          </div>
+        )}
+        </main>
+      </div>
     </div>
   );
 };

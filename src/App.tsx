@@ -1,6 +1,7 @@
 import React from 'react';
 import { GatewayPage } from './components/GatewayPage';
 import { StaffDashboard } from './components/StaffDashboard';
+import { StudentInfoModal } from './components/StudentInfoModal';
 import { StudentPortal } from './components/StudentPortal';
 import { ToastContainer } from './components/ToastContainer';
 import { SiBKProvider, useSiBK } from './context/SiBKContext';
@@ -23,6 +24,7 @@ export function App() {
   return (
     <SiBKProvider>
       <SiBKRouter />
+      <StudentInfoModal />
       <ToastContainer />
     </SiBKProvider>
   );

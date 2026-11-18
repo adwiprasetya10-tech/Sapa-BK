@@ -59,6 +59,7 @@ export const StudentNotesTab: React.FC<StudentNotesTabProps> = ({
     addCounselingNote,
     updateCounselingNote,
     deleteCounselingNote,
+    openStudentInfo,
     pushToast,
   } = useSiBK();
 
@@ -356,24 +357,62 @@ export const StudentNotesTab: React.FC<StudentNotesTabProps> = ({
               {/* Student Profile Header */}
               <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6">
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                      <h3 className="font-display text-lg sm:text-xl font-bold text-slate-900 dark:text-white">
-                        {selectedStudent.nama}
-                      </h3>
-                      <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
-                        ·
-                      </span>
-                      <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                        {selectedStudent.kelas}
-                      </span>
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400 font-mono-tabular">
-                      <span>NIS: {selectedStudent.nis}</span>
-                      <span>NISN: {selectedStudent.nisn}</span>
-                      <span className="font-sans">
-                        Wali: {selectedStudent.namaWali} ({selectedStudent.noHpWali})
-                      </span>
+                  <div className="flex items-start gap-3.5">
+                    {selectedStudent.linkFoto && (
+                      <button
+                        type="button"
+                        onClick={() => openStudentInfo(selectedStudent.id)}
+                        title="Lihat informasi lengkap siswa"
+                        className="w-12 h-12 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 shrink-0 hover:ring-2 hover:ring-teal-500 transition-all"
+                      >
+                        <img
+                          src={selectedStudent.linkFoto}
+                          alt={selectedStudent.nama}
+                          className="w-full h-full object-cover"
+                        />
+                      </button>
+                    )}
+                    <div>
+                      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                        <button
+                          type="button"
+                          onClick={() => openStudentInfo(selectedStudent.id)}
+                          title="Klik untuk lihat informasi lengkap siswa"
+                          className="font-display text-lg sm:text-xl font-bold text-slate-900 dark:text-white hover:text-teal-700 dark:hover:text-teal-300 hover:underline underline-offset-4 text-left transition-colors"
+                        >
+                          {selectedStudent.nama}
+                        </button>
+                        <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
+                          ·
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => openStudentInfo(selectedStudent.id)}
+                          title="Klik untuk lihat informasi lengkap siswa"
+                          className="text-sm font-semibold text-emerald-700 dark:text-emerald-400 hover:underline underline-offset-4 transition-colors"
+                        >
+                          {selectedStudent.kelas}
+                        </button>
+                        {selectedStudent.noAbsen && (
+                          <span className="text-xs font-mono-tabular px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                            Absen {selectedStudent.noAbsen}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400 font-mono-tabular">
+                        <span>NIS: {selectedStudent.nis}</span>
+                        <span>NISN: {selectedStudent.nisn}</span>
+                        {selectedStudent.noHp && <span>HP: {selectedStudent.noHp}</span>}
+                        {selectedStudent.email && (
+                          <span className="font-sans">{selectedStudent.email}</span>
+                        )}
+                        {selectedStudent.ttl && (
+                          <span className="font-sans">TTL: {selectedStudent.ttl}</span>
+                        )}
+                        <span className="font-sans">
+                          Wali: {selectedStudent.namaWali} ({selectedStudent.noHpWali})
+                        </span>
+                      </div>
                     </div>
                   </div>
 

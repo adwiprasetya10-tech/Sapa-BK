@@ -43,6 +43,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 
   fontPreset: 'modern',
   showSidebarQueueBadge: true,
+  enableSoundNotification: true,
+  enableTextNotification: true,
+  enableBrowserNotification: true,
 };
 
 export function loadAppSettings(): AppSettings {

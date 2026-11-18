@@ -36,10 +36,72 @@ export interface Student {
   nisn: string;
   nama: string;
   kelas: string;
+  noAbsen?: string;
+  ttl?: string;
+  email?: string;
+  noHp?: string;
+  linkFoto?: string;
   jenisKelamin: 'L' | 'P';
   namaWali: string;
   noHpWali: string;
   guruBkId: string;
+  isSekretarisKelas?: boolean;
+}
+
+export type StudentAttendanceStatus = 'Hadir' | 'Sakit' | 'Izin' | 'Terlambat';
+
+export type AttendanceVerifyStatus =
+  | 'Menunggu Verifikasi'
+  | 'Diverifikasi'
+  | 'Perlu Tindak Lanjut';
+
+export interface StudentAttendanceReport {
+  id: string;
+  studentId: string;
+  tanggal: string; // YYYY-MM-DD
+  jamKirim: string; // HH:mm
+  status: StudentAttendanceStatus;
+  keterangan: string;
+  fotoLampiranDataUrl?: string;
+  fotoLampiranName?: string;
+  statusVerifikasi: AttendanceVerifyStatus;
+  catatanGuru?: string;
+  verifiedBy?: string;
+  createdAt: string;
+}
+
+export type ClassAttendanceStatus = 'Hadir' | 'Sakit' | 'Izin' | 'Alpa' | 'Terlambat';
+
+export interface ClassAttendanceEntry {
+  studentId: string;
+  status: ClassAttendanceStatus;
+  keterangan?: string;
+}
+
+export interface DailyClassAttendance {
+  id: string;
+  kelas: string;
+  tanggal: string; // YYYY-MM-DD
+  inputByStudentId?: string;
+  inputByName: string;
+  entries: ClassAttendanceEntry[];
+  updatedAt: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  studentId: string;
+  staffId: string;
+  senderRole: 'student' | 'staff';
+  senderName: string;
+  message: string;
+  attachmentDataUrl?: string;
+  attachmentName?: string;
+  tanggal: string; // YYYY-MM-DD
+  jam: string; // HH:mm
+  createdAt: string;
+  readByStudent: boolean;
+  readByStaff: boolean;
 }
 
 export interface StaffUser {
@@ -109,7 +171,7 @@ export interface ActivityLog {
   timestamp: string;
   tanggal: string;
   actor: string;
-  type: 'request' | 'note' | 'guest' | 'schedule' | 'master';
+  type: 'request' | 'note' | 'guest' | 'schedule' | 'master' | 'attendance' | 'chat';
   description: string;
 }
 
@@ -132,6 +194,9 @@ export interface SiBKDatabase {
   notes: CounselingNote[];
   guests: GuestVisit[];
   activities: ActivityLog[];
+  studentAttendances: StudentAttendanceReport[];
+  classAttendances: DailyClassAttendance[];
+  chats: ChatMessage[];
 }
 
 export type WebLogoPreset = 'shield' | 'graduation' | 'heart' | 'sparkles' | 'school';
@@ -175,9 +240,12 @@ export interface AppSettings {
   allowSecretUrgency: boolean;
   serviceHoursNote: string;
 
-  // 4. Tampilan Global
+  // 4. Tampilan Global & Notifikasi
   fontPreset: FontPreset;
   showSidebarQueueBadge: boolean;
+  enableSoundNotification: boolean;
+  enableTextNotification: boolean;
+  enableBrowserNotification: boolean;
 }
 
 

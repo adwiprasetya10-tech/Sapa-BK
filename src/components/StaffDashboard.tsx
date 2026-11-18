@@ -1,19 +1,25 @@
 import React, { useState } from 'react';
 import {
   BookOpenCheck,
+  ClipboardCheck,
   Database,
   FileText,
   Inbox,
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageSquare,
   Settings,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import { useSiBK } from '../context/SiBKContext';
 import { CounselingRequest } from '../types/sibk';
 import { BrandLogo } from './BrandLogo';
 import { ThemeSwitcher } from './ThemeSwitcher';
+import { AttendanceMonitorTab } from './dashboard/AttendanceMonitorTab';
+import { ChatCenterTab } from './dashboard/ChatCenterTab';
 import { GuestMonitorTab } from './dashboard/GuestMonitorTab';
 import { MasterExportTab } from './dashboard/MasterExportTab';
 import { OverviewTab } from './dashboard/OverviewTab';
@@ -21,10 +27,19 @@ import { QueueInboxTab } from './dashboard/QueueInboxTab';
 import { SettingsTab } from './dashboard/SettingsTab';
 import { StudentNotesTab } from './dashboard/StudentNotesTab';
 
-type DashboardMenu = 'overview' | 'queue' | 'notes' | 'guests' | 'master' | 'settings';
+type DashboardMenu =
+  | 'overview'
+  | 'queue'
+  | 'notes'
+  | 'attendance'
+  | 'chat'
+  | 'guests'
+  | 'master'
+  | 'settings';
 
 export const StaffDashboard: React.FC = () => {
-  const { db, currentStaff, settings, logout, toggleStaffAvailability } = useSiBK();
+  const { db, currentStaff, settings, updateSettings, logout, toggleStaffAvailability } =
+    useSiBK();
   const [activeMenu, setActiveMenu] = useState<DashboardMenu>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [prefillRequestForNote, setPrefillRequestForNote] =
@@ -33,10 +48,29 @@ export const StaffDashboard: React.FC = () => {
   if (!currentStaff) return null;
 
   const isAdmin = currentStaff.role === 'admin';
+  const scopedStudentIds = new Set(
+    isAdmin
+      ? db.students.map((s) => s.id)
+      : db.students.filter((s) => s.guruBkId === currentStaff.id).map((s) => s.id)
+  );
+
   const pendingQueueCount = db.requests.filter((r) => {
     const inScope = isAdmin || r.guruTujuanId === currentStaff.id;
     return inScope && r.status === 'Menunggu Konfirmasi';
   }).length;
+
+  const pendingAttendanceCount = db.studentAttendances.filter(
+    (a) =>
+      (isAdmin || scopedStudentIds.has(a.studentId)) &&
+      a.statusVerifikasi === 'Menunggu Verifikasi'
+  ).length;
+
+  const unreadChatCount = db.chats.filter(
+    (c) =>
+      c.senderRole === 'student' &&
+      !c.readByStaff &&
+      (isAdmin || c.staffId === currentStaff.id)
+  ).length;
 
   const navItems: {
     id: DashboardMenu;
@@ -62,6 +96,18 @@ export const StaffDashboard: React.FC = () => {
       id: 'notes',
       label: 'Catatan & Rekam Jejak',
       icon: <FileText className="w-4 h-4 shrink-0" />,
+    },
+    {
+      id: 'attendance',
+      label: 'Kehadiran & Sekretaris',
+      icon: <ClipboardCheck className="w-4 h-4 shrink-0" />,
+      badge: pendingAttendanceCount > 0 ? pendingAttendanceCount : undefined,
+    },
+    {
+      id: 'chat',
+      label: 'Chat Siswa & BK',
+      icon: <MessageSquare className="w-4 h-4 shrink-0" />,
+      badge: unreadChatCount > 0 ? unreadChatCount : undefined,
     },
     {
       id: 'guests',
@@ -278,6 +324,31 @@ export const StaffDashboard: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() =>
+                updateSettings({
+                  enableSoundNotification: !settings.enableSoundNotification,
+                })
+              }
+              title={
+                settings.enableSoundNotification
+                  ? 'Suara Notifikasi Aktif (Klik untuk senyapkan)'
+                  : 'Suara Notifikasi Senyap (Klik untuk aktifkan)'
+              }
+              aria-label="Toggle suara notifikasi"
+              className={`p-2 rounded-xl border transition-colors ${
+                settings.enableSoundNotification
+                  ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              {settings.enableSoundNotification ? (
+                <Volume2 className="w-4 h-4" />
+              ) : (
+                <VolumeX className="w-4 h-4" />
+              )}
+            </button>
             {settings.showThemeSwitcher && <ThemeSwitcher />}
             <button
               type="button"
@@ -318,6 +389,8 @@ export const StaffDashboard: React.FC = () => {
               onClearPrefill={() => setPrefillRequestForNote(null)}
             />
           )}
+          {activeMenu === 'attendance' && <AttendanceMonitorTab />}
+          {activeMenu === 'chat' && <ChatCenterTab />}
           {activeMenu === 'guests' && <GuestMonitorTab />}
           {activeMenu === 'master' && <MasterExportTab />}
           {activeMenu === 'settings' && <SettingsTab />}

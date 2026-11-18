@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Camera,
   Download,
   Edit3,
   FileJson,
@@ -32,6 +33,7 @@ import {
   exportStudentsCSV,
   parseCsvRows,
 } from '../../utils/dataTransfer';
+import { compressImageFile } from '../../utils/imageCompress';
 
 type SubTab = 'siswa' | 'guru' | 'laporan';
 
@@ -51,6 +53,8 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
     importGuests,
     importFullBackup,
     resetDemoData,
+    toggleStudentSecretaryAccess,
+    openStudentInfo,
     pushToast,
   } = useSiBK();
 
@@ -135,10 +139,16 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
       nisn: '',
       nama: '',
       kelas: 'X Merdeka 1',
+      noAbsen: '',
+      ttl: '',
+      email: '',
+      noHp: '',
+      linkFoto: '',
       jenisKelamin: 'P',
       namaWali: '',
       noHpWali: '',
       guruBkId: currentStaff?.id || db.staff[1]?.id || db.staff[0]?.id || '',
+      isSekretarisKelas: false,
     });
     setStudentModalOpen(true);
   };
@@ -159,10 +169,16 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
       nisn: editingStudent.nisn,
       nama: editingStudent.nama,
       kelas: editingStudent.kelas,
+      noAbsen: editingStudent.noAbsen?.trim() || undefined,
+      ttl: editingStudent.ttl?.trim() || undefined,
+      email: editingStudent.email?.trim() || undefined,
+      noHp: editingStudent.noHp?.trim() || undefined,
+      linkFoto: editingStudent.linkFoto?.trim() || undefined,
       jenisKelamin: editingStudent.jenisKelamin || 'P',
       namaWali: editingStudent.namaWali || '-',
       noHpWali: editingStudent.noHpWali || '-',
       guruBkId: editingStudent.guruBkId || db.staff[0]?.id || '',
+      isSekretarisKelas: Boolean(editingStudent.isSekretarisKelas),
     });
     setStudentModalOpen(false);
   };
@@ -265,16 +281,35 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
 
       if (importTarget === 'students') {
         const defaultAdvisor = currentStaff?.id || db.staff[1]?.id || db.staff[0]?.id || '';
-        const studentRows: Omit<Student, 'id'>[] = rows.slice(1).map((cols) => ({
-          nis: cols[0] || `2025${Math.floor(100 + Math.random() * 899)}`,
-          nisn: cols[1] || `008${Math.floor(1000000 + Math.random() * 8999999)}`,
-          nama: cols[2] || 'Siswa Baru',
-          kelas: cols[3] || 'X Merdeka 1',
-          jenisKelamin: cols[4]?.toUpperCase() === 'L' ? 'L' : 'P',
-          namaWali: cols[5] || '-',
-          noHpWali: cols[6] || '-',
-          guruBkId: defaultAdvisor,
-        }));
+        const isExtendedCsv = rows[0]?.length >= 10;
+        const studentRows: Omit<Student, 'id'>[] = rows.slice(1).map((cols) =>
+          isExtendedCsv
+            ? {
+                nis: cols[0] || `2025${Math.floor(100 + Math.random() * 899)}`,
+                nisn: cols[1] || `008${Math.floor(1000000 + Math.random() * 8999999)}`,
+                nama: cols[2] || 'Siswa Baru',
+                kelas: cols[3] || 'X Merdeka 1',
+                noAbsen: cols[4] && cols[4] !== '-' ? cols[4] : undefined,
+                ttl: cols[5] && cols[5] !== '-' ? cols[5] : undefined,
+                email: cols[6] && cols[6] !== '-' ? cols[6] : undefined,
+                noHp: cols[7] && cols[7] !== '-' ? cols[7] : undefined,
+                linkFoto: cols[8] && cols[8] !== '-' ? cols[8] : undefined,
+                jenisKelamin: cols[9]?.toUpperCase() === 'L' ? 'L' : 'P',
+                namaWali: cols[10] || '-',
+                noHpWali: cols[11] || '-',
+                guruBkId: defaultAdvisor,
+              }
+            : {
+                nis: cols[0] || `2025${Math.floor(100 + Math.random() * 899)}`,
+                nisn: cols[1] || `008${Math.floor(1000000 + Math.random() * 8999999)}`,
+                nama: cols[2] || 'Siswa Baru',
+                kelas: cols[3] || 'X Merdeka 1',
+                jenisKelamin: cols[4]?.toUpperCase() === 'L' ? 'L' : 'P',
+                namaWali: cols[5] || '-',
+                noHpWali: cols[6] || '-',
+                guruBkId: defaultAdvisor,
+              }
+        );
         setPreviewInfo({
           fileName: file.name,
           countLabel: `${studentRows.length} data siswa siap diimpor`,
@@ -515,10 +550,11 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
                       />
                     </th>
                     <th className="py-3 px-4">NIS / NISN</th>
+                    <th className="py-3 px-4">Absen</th>
                     <th className="py-3 px-4">Nama Lengkap</th>
                     <th className="py-3 px-4">Kelas</th>
-                    <th className="py-3 px-4">Wali Murid</th>
-                    <th className="py-3 px-4">Guru BK Pembimbing</th>
+                    <th className="py-3 px-4">TTL & Kontak Siswa</th>
+                    <th className="py-3 px-4">Wali & Pembimbing BK</th>
                     <th className="py-3 px-4 text-right">Aksi</th>
                   </tr>
                 </thead>
@@ -550,18 +586,79 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
                           </div>
                           <div className="text-slate-500 dark:text-slate-400">{s.nisn}</div>
                         </td>
-                        <td className="py-3 px-4 font-semibold text-slate-900 dark:text-white">
-                          {s.nama}
+                        <td className="py-3 px-4 font-mono-tabular text-xs font-bold text-slate-700 dark:text-slate-200">
+                          {s.noAbsen || '-'}
                         </td>
-                        <td className="py-3 px-4 text-emerald-700 dark:text-emerald-400 font-medium whitespace-nowrap">
-                          {s.kelas}
+                        <td className="py-3 px-4 font-semibold text-slate-900 dark:text-white">
+                          <div className="flex items-center gap-2.5">
+                            {s.linkFoto ? (
+                              <img
+                                src={s.linkFoto}
+                                alt={s.nama}
+                                className="w-8 h-8 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                              />
+                            ) : (
+                              <span className="w-8 h-8 rounded-lg bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 text-xs font-bold flex items-center justify-center shrink-0">
+                                {s.nama.charAt(0).toUpperCase()}
+                              </span>
+                            )}
+                            <div>
+                              <button
+                                type="button"
+                                onClick={() => openStudentInfo(s.id)}
+                                title="Klik untuk lihat pop-up informasi lengkap siswa"
+                                className="text-left font-semibold text-slate-900 dark:text-white hover:text-teal-700 dark:hover:text-teal-300 hover:underline decoration-teal-500/60 underline-offset-2"
+                              >
+                                {s.nama}
+                              </button>
+                              <div>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    toggleStudentSecretaryAccess(s.id, !s.isSekretarisKelas)
+                                  }
+                                  className={`mt-1 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold border transition-colors ${
+                                    s.isSekretarisKelas
+                                      ? 'bg-teal-50 dark:bg-teal-950/60 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-300'
+                                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700'
+                                  }`}
+                                  title="Klik untuk aktifkan/nonaktifkan akses Sekretaris Kelas"
+                                >
+                                  {s.isSekretarisKelas
+                                    ? 'Sekretaris Kelas (Aktif)'
+                                    : '+ Jadikan Sekretaris'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => openStudentInfo(s.id)}
+                            title="Klik untuk lihat pop-up informasi siswa"
+                            className="inline-flex items-center px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-300 font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
+                          >
+                            {s.kelas}
+                          </button>
                         </td>
                         <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-300">
-                          <div>{s.namaWali}</div>
-                          <div className="font-mono-tabular text-slate-400">{s.noHpWali}</div>
+                          <div className="truncate max-w-[190px]">{s.ttl || '-'}</div>
+                          <div className="truncate max-w-[190px] text-slate-500 dark:text-slate-400">
+                            {s.email || '-'}
+                          </div>
+                          <div className="font-mono-tabular text-slate-500 dark:text-slate-400">
+                            {s.noHp || '-'}
+                          </div>
                         </td>
-                        <td className="py-3 px-4 text-xs text-slate-700 dark:text-slate-300">
-                          {advisor?.nama || '-'}
+                        <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-300">
+                          <div className="font-medium text-slate-800 dark:text-slate-200">
+                            {s.namaWali}
+                          </div>
+                          <div className="font-mono-tabular text-slate-400">{s.noHpWali}</div>
+                          <div className="text-[11px] text-teal-700 dark:text-teal-400 mt-0.5">
+                            BK: {advisor?.nama || '-'}
+                          </div>
                         </td>
                         <td className="py-3 px-4 text-right whitespace-nowrap">
                           <button
@@ -959,7 +1056,7 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
       {/* MODAL: ADD/EDIT STUDENT */}
       {studentModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 max-w-lg w-full p-6 shadow-xl">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 max-w-xl w-full p-6 shadow-xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
               <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
                 {editingStudent.id ? 'Edit Data Siswa' : 'Tambah Siswa Baru'}
@@ -973,7 +1070,7 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
               </button>
             </div>
             <form onSubmit={handleSaveStudent} className="space-y-3.5">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
                     NIS
@@ -999,6 +1096,20 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
                     onChange={(e) =>
                       setEditingStudent({ ...editingStudent, nisn: e.target.value })
                     }
+                    className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm font-mono-tabular text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div className="col-span-2 sm:col-span-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    No. Absen
+                  </label>
+                  <input
+                    type="text"
+                    value={editingStudent.noAbsen || ''}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, noAbsen: e.target.value })
+                    }
+                    placeholder="Contoh: 04"
                     className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm font-mono-tabular text-slate-900 dark:text-white"
                   />
                 </div>
@@ -1031,6 +1142,101 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
                     }
                     className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-white"
                   />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Tempat, Tgl Lahir (TTL)
+                  </label>
+                  <input
+                    type="text"
+                    value={editingStudent.ttl || ''}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, ttl: e.target.value })
+                    }
+                    placeholder="Yogyakarta, 14 Mei 2007"
+                    className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Email Siswa
+                  </label>
+                  <input
+                    type="email"
+                    value={editingStudent.email || ''}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, email: e.target.value })
+                    }
+                    placeholder="siswa@sekolah.sch.id"
+                    className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    No. HP Siswa
+                  </label>
+                  <input
+                    type="text"
+                    value={editingStudent.noHp || ''}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, noHp: e.target.value })
+                    }
+                    placeholder="08xxxxxxxxxx"
+                    className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm font-mono-tabular text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Link Foto (URL) atau Unggah Foto
+                </label>
+                <div className="flex items-center gap-2">
+                  {editingStudent.linkFoto && (
+                    <img
+                      src={editingStudent.linkFoto}
+                      alt="Preview"
+                      className="w-9 h-9 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                    />
+                  )}
+                  <input
+                    type="text"
+                    value={editingStudent.linkFoto || ''}
+                    onChange={(e) =>
+                      setEditingStudent({ ...editingStudent, linkFoto: e.target.value })
+                    }
+                    placeholder="https://... atau unggah foto"
+                    className="flex-1 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm font-mono-tabular text-slate-900 dark:text-white"
+                  />
+                  <label className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 cursor-pointer shrink-0">
+                    <Camera className="w-4 h-4" />
+                    <span>Unggah</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file) return;
+                        try {
+                          const res = await compressImageFile(file, 600, 0.8);
+                          setEditingStudent((prev) => ({
+                            ...prev,
+                            linkFoto: res.dataUrl,
+                          }));
+                        } catch (err) {
+                          pushToast({
+                            type: 'error',
+                            title: 'Gagal Memuat Foto',
+                            message:
+                              err instanceof Error ? err.message : 'Format tidak valid.',
+                          });
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -1079,6 +1285,22 @@ export const MasterExportTab: React.FC<{ initialSubTab?: SubTab }> = ({
                   ))}
                 </select>
               </div>
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 px-3.5 py-2.5 cursor-pointer">
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                  Berikan Akses Sekretaris Kelas (Input Presensi Harian)
+                </span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(editingStudent.isSekretarisKelas)}
+                  onChange={(e) =>
+                    setEditingStudent({
+                      ...editingStudent,
+                      isSekretarisKelas: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 rounded text-teal-600"
+                />
+              </label>
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"

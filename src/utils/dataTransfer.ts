@@ -30,7 +30,7 @@ function downloadFile(content: string, filename: string, mimeType: string) {
 export function exportStudentsCSV(students: Student[], staff: StaffUser[], label = 'Siswa') {
   const staffMap = new Map(staff.map((g) => [g.id, g.nama]));
   const lines: string[] = [
-    'NIS,NISN,Nama Lengkap,Kelas,Jenis Kelamin,Nama Wali Murid,No HP Wali,Guru BK Pembimbing',
+    'NIS,NISN,Nama Lengkap,Kelas,No Absen,TTL,Email,No HP Siswa,Link Foto,Jenis Kelamin,Nama Wali Murid,No HP Wali,Guru BK Pembimbing',
   ];
   students.forEach((s) => {
     lines.push(
@@ -39,6 +39,11 @@ export function exportStudentsCSV(students: Student[], staff: StaffUser[], label
         s.nisn,
         s.nama,
         s.kelas,
+        s.noAbsen || '-',
+        s.ttl || '-',
+        s.email || '-',
+        s.noHp || '-',
+        s.linkFoto || '-',
         s.jenisKelamin,
         s.namaWali,
         s.noHpWali,
@@ -189,9 +194,9 @@ export function exportFullBackupJSON(db: SiBKDatabase) {
 
 export function downloadStudentCSVTemplate() {
   const sample = [
-    'NIS,NISN,Nama Lengkap,Kelas,Jenis Kelamin,Nama Wali Murid,No HP Wali',
-    '2024099,0081122990,Citra Lestari,X Merdeka 2,P,Ibu Dewi Sartika,081299887766',
-    '2024100,0082233445,Budi Santoso,XI IPA 2,L,Bapak Slamet,081344556677',
+    'NIS,NISN,Nama Lengkap,Kelas,No Absen,TTL,Email,No HP Siswa,Link Foto,Jenis Kelamin,Nama Wali Murid,No HP Wali',
+    '2024099,0081122990,Citra Lestari,X Merdeka 2,07,"Yogyakarta, 10 Mei 2009",citra.lestari@siswa.sman-nusantara.sch.id,081299881122,https://example.com/foto/citra.jpg,P,Ibu Dewi Sartika,081299887766',
+    '2024100,0082233445,Budi Santoso,XI IPA 2,12,"Sleman, 02 Maret 2008",budi.santoso@siswa.sman-nusantara.sch.id,081344551122,https://example.com/foto/budi.jpg,L,Bapak Slamet,081344556677',
   ].join('\r\n');
   downloadFile('\uFEFF' + sample, 'Template_Impor_Siswa_SiBK.csv', 'text/csv;charset=utf-8;');
 }

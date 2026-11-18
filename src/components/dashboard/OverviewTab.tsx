@@ -12,7 +12,9 @@ import { getTodayISO } from '../../data/seedData';
 import { CounselingCategory } from '../../types/sibk';
 
 interface OverviewTabProps {
-  onNavigate: (menu: 'overview' | 'queue' | 'notes' | 'guests' | 'master') => void;
+  onNavigate: (
+    menu: 'overview' | 'queue' | 'notes' | 'attendance' | 'chat' | 'guests' | 'master'
+  ) => void;
 }
 
 const CORE_CATEGORIES: {
@@ -229,6 +231,57 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ onNavigate }) => {
           <p className="mt-1.5 text-xs text-sky-700 dark:text-sky-400 font-medium">
             {todayGuests.filter((g) => g.status === 'Berkunjung').length} masih berada di sekolah
           </p>
+        </button>
+      </div>
+
+      {/* Quick Attendance & Chat Highlights */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <button
+          type="button"
+          onClick={() => onNavigate('attendance')}
+          className="text-left bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-5 py-4 flex items-center justify-between gap-4 hover:border-teal-400 dark:hover:border-teal-600 transition-colors"
+        >
+          <div>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 block">
+              Info Kehadiran Berfoto & Sekretaris Kelas
+            </span>
+            <p className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 font-mono-tabular">
+              {
+                db.studentAttendances.filter(
+                  (a) =>
+                    (isAdmin || scopedStudentIds.has(a.studentId)) &&
+                    a.statusVerifikasi === 'Menunggu Verifikasi'
+                ).length
+              }{' '}
+              laporan menunggu verifikasi ·{' '}
+              {db.students.filter((s) => s.isSekretarisKelas).length} Sekretaris aktif
+            </p>
+          </div>
+          <ArrowUpRight className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate('chat')}
+          className="text-left bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-5 py-4 flex items-center justify-between gap-4 hover:border-teal-400 dark:hover:border-teal-600 transition-colors"
+        >
+          <div>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 block">
+              Chat Konseling Siswa (Notifikasi Suara & Tulisan)
+            </span>
+            <p className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 font-mono-tabular">
+              {
+                db.chats.filter(
+                  (c) =>
+                    c.senderRole === 'student' &&
+                    !c.readByStaff &&
+                    (isAdmin || c.staffId === currentStaff?.id)
+                ).length
+              }{' '}
+              pesan baru belum dibaca
+            </p>
+          </div>
+          <ArrowUpRight className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
         </button>
       </div>
 

@@ -49,6 +49,7 @@ export const QueueInboxTab: React.FC<QueueInboxTabProps> = ({
     updateRequest,
     deleteRequests,
     completeRequestsBulk,
+    openStudentInfo,
     pushToast,
   } = useSiBK();
 
@@ -352,13 +353,35 @@ export const QueueInboxTab: React.FC<QueueInboxTabProps> = ({
                     />
                     <div className="space-y-2 flex-1">
                       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                        <span className="font-semibold text-slate-900 dark:text-white text-sm">
-                          {student?.nama || 'Siswa'}
-                        </span>
+                        {student ? (
+                          <button
+                            type="button"
+                            onClick={() => openStudentInfo(student.id)}
+                            title="Klik untuk lihat informasi lengkap siswa"
+                            className="font-semibold text-slate-900 dark:text-white text-sm hover:text-teal-700 dark:hover:text-teal-300 hover:underline underline-offset-2 text-left transition-colors"
+                          >
+                            {student.nama}
+                          </button>
+                        ) : (
+                          <span className="font-semibold text-slate-900 dark:text-white text-sm">
+                            Siswa
+                          </span>
+                        )}
                         <span aria-hidden="true">·</span>
-                        <span className="font-medium text-emerald-700 dark:text-emerald-400">
-                          {student?.kelas || '-'}
-                        </span>
+                        {student ? (
+                          <button
+                            type="button"
+                            onClick={() => openStudentInfo(student.id)}
+                            title="Klik untuk lihat informasi lengkap siswa"
+                            className="font-medium text-emerald-700 dark:text-emerald-400 hover:underline underline-offset-2 transition-colors"
+                          >
+                            {student.kelas}
+                          </button>
+                        ) : (
+                          <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                            -
+                          </span>
+                        )}
                         <span aria-hidden="true">·</span>
                         <span className="font-mono-tabular">
                           NIS {student?.nis || '-'}

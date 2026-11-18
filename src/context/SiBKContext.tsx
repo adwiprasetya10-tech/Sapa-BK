@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
   createInitialDatabase,
   getCurrentTimeHHMM,
@@ -8,16 +8,22 @@ import {
   ActivityLog,
   AppSettings,
   AppThemeId,
+  AttendanceVerifyStatus,
   AuthSession,
   AvailabilityStatus,
+  ChatMessage,
+  ClassAttendanceEntry,
   CounselingCategory,
   CounselingNote,
   CounselingRequest,
+  DailyClassAttendance,
   GuestVisit,
   ProgressStatus,
   SiBKDatabase,
   StaffUser,
   Student,
+  StudentAttendanceReport,
+  StudentAttendanceStatus,
   ToastMessage,
   UrgencyLevel,
   VisitorCategory,
@@ -28,6 +34,11 @@ import {
   saveAppSettings,
   SETTINGS_STORAGE_KEY,
 } from '../utils/appSettings';
+import {
+  playNotificationSound,
+  registerAudioUnlock,
+  showBrowserTextNotification,
+} from '../utils/soundNotifier';
 import { getThemeMeta } from '../utils/themeRegistry';
 
 const DB_STORAGE_KEY = 'sibk_database_v2';
@@ -111,21 +122,107 @@ interface SiBKContextValue {
   ) => number;
   importFullBackup: (backupDb: SiBKDatabase, mode: 'merge' | 'replace') => void;
   resetDemoData: () => void;
+  toggleStudentSecretaryAccess: (studentId: string, enabled: boolean) => void;
+  submitStudentAttendance: (payload: {
+    tanggal: string;
+    status: StudentAttendanceStatus;
+    keterangan: string;
+    fotoLampiranDataUrl?: string;
+    fotoLampiranName?: string;
+  }) => void;
+  verifyStudentAttendance: (
+    reportId: string,
+    statusVerifikasi: AttendanceVerifyStatus,
+    catatanGuru?: string
+  ) => void;
+  deleteStudentAttendances: (reportIds: string[]) => void;
+  saveDailyClassAttendance: (
+    kelas: string,
+    tanggal: string,
+    entries: ClassAttendanceEntry[]
+  ) => void;
+  sendChatMessage: (payload: {
+    studentId: string;
+    staffId: string;
+    senderRole: 'student' | 'staff';
+    message: string;
+    attachmentDataUrl?: string;
+    attachmentName?: string;
+  }) => void;
+  markChatRead: (studentId: string, staffId: string, viewerRole: 'student' | 'staff') => void;
+  testNotificationSound: () => void;
+  selectedStudentInfoId: string | null;
+  openStudentInfo: (studentId: string) => void;
+  closeStudentInfo: () => void;
 }
 
 const SiBKContext = createContext<SiBKContextValue | null>(null);
+
+function normalizeDatabase(rawDb: Partial<SiBKDatabase>): SiBKDatabase {
+  const initial = createInitialDatabase();
+  const initialById = new Map(initial.students.map((s) => [s.id, s]));
+  const isFirstAttendanceMigration =
+    !Array.isArray(rawDb.studentAttendances) &&
+    !Array.isArray(rawDb.classAttendances) &&
+    !Array.isArray(rawDb.chats);
+
+  const baseStudents = Array.isArray(rawDb.students) ? rawDb.students : initial.students;
+  const mergedRoster = isFirstAttendanceMigration
+    ? (() => {
+        const existingIds = new Set(baseStudents.map((s) => s.id));
+        const extraClassmates = initial.students.filter((s) => !existingIds.has(s.id));
+        return [
+          ...baseStudents.map((s) =>
+            s.id === 'std-1' && s.isSekretarisKelas === undefined
+              ? { ...s, isSekretarisKelas: true }
+              : s
+          ),
+          ...extraClassmates,
+        ];
+      })()
+    : baseStudents;
+
+  const students = mergedRoster.map((s) => {
+    const seedMatch = initialById.get(s.id);
+    if (!seedMatch) return s;
+    return {
+      ...s,
+      noAbsen: s.noAbsen ?? seedMatch.noAbsen,
+      ttl: s.ttl ?? seedMatch.ttl,
+      email: s.email ?? seedMatch.email,
+      noHp: s.noHp ?? seedMatch.noHp,
+      linkFoto: s.linkFoto ?? seedMatch.linkFoto,
+    };
+  });
+
+  return {
+    students,
+    staff: Array.isArray(rawDb.staff) ? rawDb.staff : initial.staff,
+    requests: Array.isArray(rawDb.requests) ? rawDb.requests : initial.requests,
+    notes: Array.isArray(rawDb.notes) ? rawDb.notes : initial.notes,
+    guests: Array.isArray(rawDb.guests) ? rawDb.guests : initial.guests,
+    activities: Array.isArray(rawDb.activities) ? rawDb.activities : initial.activities,
+    studentAttendances: Array.isArray(rawDb.studentAttendances)
+      ? rawDb.studentAttendances
+      : initial.studentAttendances,
+    classAttendances: Array.isArray(rawDb.classAttendances)
+      ? rawDb.classAttendances
+      : initial.classAttendances,
+    chats: Array.isArray(rawDb.chats) ? rawDb.chats : initial.chats,
+  };
+}
 
 function loadDatabase(): SiBKDatabase {
   try {
     const raw = localStorage.getItem(DB_STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as SiBKDatabase;
+      const parsed = JSON.parse(raw) as Partial<SiBKDatabase>;
       if (parsed && Array.isArray(parsed.students) && Array.isArray(parsed.staff)) {
         const hasLegacyStaff = parsed.staff.some((s) =>
           ['staff-admin', 'staff-sari', 'staff-rizky', 'staff-nadia'].includes(s.id)
         );
         if (!hasLegacyStaff && parsed.staff.length > 0) {
-          return parsed;
+          return normalizeDatabase(parsed);
         }
       }
     }
@@ -169,6 +266,15 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [theme, setThemeState] = useState<AppThemeId>(() => loadTheme());
   const [settings, setSettings] = useState<AppSettings>(() => loadAppSettings());
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [selectedStudentInfoId, setSelectedStudentInfoId] = useState<string | null>(null);
+
+  const openStudentInfo = useCallback((studentId: string) => {
+    setSelectedStudentInfoId(studentId);
+  }, []);
+
+  const closeStudentInfo = useCallback(() => {
+    setSelectedStudentInfoId(null);
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -231,11 +337,136 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [settings, theme]);
 
+  const dbRef = useRef(db);
+  dbRef.current = db;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
+  useEffect(() => {
+    registerAudioUnlock();
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const pushToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
+    const id = uid('toast');
+    setToasts((prev) => [...prev.slice(-3), { ...toast, id }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4500);
+  }, []);
+
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
       if (e.key === DB_STORAGE_KEY && e.newValue) {
         try {
-          setDb(JSON.parse(e.newValue));
+          const nextDb = normalizeDatabase(JSON.parse(e.newValue));
+          const prevDb = dbRef.current;
+          const activeSession = sessionRef.current;
+          const cfg = settingsRef.current;
+
+          // Detect newly arrived chat messages from the other party across tabs
+          const prevChatIds = new Set(prevDb.chats.map((c) => c.id));
+          const newChats = nextDb.chats.filter((c) => !prevChatIds.has(c.id));
+
+          if (activeSession?.type === 'student') {
+            const incomingForStudent = newChats.filter(
+              (c) => c.studentId === activeSession.studentId && c.senderRole === 'staff'
+            );
+            if (incomingForStudent.length > 0) {
+              const latest = incomingForStudent[incomingForStudent.length - 1];
+              if (cfg.enableSoundNotification) playNotificationSound('chat');
+              if (cfg.enableTextNotification) {
+                pushToast({
+                  type: 'info',
+                  title: `Pesan Baru dari ${latest.senderName}`,
+                  message: latest.message || 'Mengirim lampiran foto',
+                });
+              }
+              if (cfg.enableBrowserNotification) {
+                showBrowserTextNotification(
+                  `${cfg.appName}: Pesan dari ${latest.senderName}`,
+                  latest.message || 'Mengirim lampiran foto'
+                );
+              }
+            }
+
+            // Detect verified attendance update for this student
+            const verifiedNow = nextDb.studentAttendances.find((att) => {
+              if (att.studentId !== activeSession.studentId) return false;
+              const prevAtt = prevDb.studentAttendances.find((p) => p.id === att.id);
+              return (
+                prevAtt &&
+                prevAtt.statusVerifikasi !== att.statusVerifikasi &&
+                att.statusVerifikasi !== 'Menunggu Verifikasi'
+              );
+            });
+            if (verifiedNow) {
+              if (cfg.enableSoundNotification) playNotificationSound('attendance');
+              if (cfg.enableTextNotification) {
+                pushToast({
+                  type: 'success',
+                  title: `Info Kehadiran ${verifiedNow.statusVerifikasi}`,
+                  message: verifiedNow.catatanGuru || `Laporan tanggal ${verifiedNow.tanggal} telah diperiksa.`,
+                });
+              }
+            }
+          } else if (activeSession?.type === 'staff') {
+            const staffUser = nextDb.staff.find((g) => g.id === activeSession.staffId);
+            const isAdmin = staffUser?.role === 'admin';
+            const incomingForStaff = newChats.filter(
+              (c) =>
+                c.senderRole === 'student' &&
+                (isAdmin || c.staffId === activeSession.staffId)
+            );
+            if (incomingForStaff.length > 0) {
+              const latest = incomingForStaff[incomingForStaff.length - 1];
+              if (cfg.enableSoundNotification) playNotificationSound('chat');
+              if (cfg.enableTextNotification) {
+                pushToast({
+                  type: 'info',
+                  title: `Chat Siswa: ${latest.senderName}`,
+                  message: latest.message || 'Mengirim lampiran foto',
+                });
+              }
+              if (cfg.enableBrowserNotification) {
+                showBrowserTextNotification(
+                  `${cfg.appName}: Chat dari ${latest.senderName}`,
+                  latest.message || 'Mengirim lampiran foto'
+                );
+              }
+            }
+
+            // Detect newly submitted student attendance reports across tabs
+            const prevAttIds = new Set(prevDb.studentAttendances.map((a) => a.id));
+            const newAtts = nextDb.studentAttendances.filter((a) => !prevAttIds.has(a.id));
+            if (newAtts.length > 0) {
+              const latestAtt = newAtts[0];
+              const st = nextDb.students.find((s) => s.id === latestAtt.studentId);
+              if (isAdmin || st?.guruBkId === activeSession.staffId) {
+                if (cfg.enableSoundNotification) playNotificationSound('attendance');
+                if (cfg.enableTextNotification) {
+                  pushToast({
+                    type: 'info',
+                    title: `Info Kehadiran Baru (${latestAtt.status})`,
+                    message: `${st?.nama || 'Siswa'} (${st?.kelas || '-'}) mengirim laporan kehadiran.`,
+                  });
+                }
+                if (cfg.enableBrowserNotification) {
+                  showBrowserTextNotification(
+                    `${cfg.appName}: Info Kehadiran Baru`,
+                    `${st?.nama || 'Siswa'} (${latestAtt.status})`
+                  );
+                }
+              }
+            }
+          }
+
+          setDb(nextDb);
         } catch {
           // ignore
         }
@@ -250,19 +481,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, []);
-
-  const dismissToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
-
-  const pushToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
-    const id = uid('toast');
-    setToasts((prev) => [...prev.slice(-3), { ...toast, id }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4500);
-  }, []);
+  }, [pushToast]);
 
   const setTheme = useCallback(
     (themeId: AppThemeId) => {
@@ -363,9 +582,31 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         title: `Selamat Datang, ${found.nama}`,
         message: `Masuk ke Portal Siswa · Kelas ${found.kelas}`,
       });
+      const unreadChats = db.chats.filter(
+        (c) => c.studentId === found.id && c.senderRole === 'staff' && !c.readByStudent
+      );
+      if (unreadChats.length > 0) {
+        if (settings.enableSoundNotification) {
+          playNotificationSound('chat');
+        }
+        if (settings.enableTextNotification) {
+          const last = unreadChats[unreadChats.length - 1];
+          pushToast({
+            type: 'info',
+            title: `${unreadChats.length} Pesan Baru dari ${last.senderName}`,
+            message: last.message || 'Buka tab Chat Guru BK untuk membaca.',
+          });
+        }
+      }
       return { ok: true };
     },
-    [db.students, pushToast]
+    [
+      db.chats,
+      db.students,
+      pushToast,
+      settings.enableSoundNotification,
+      settings.enableTextNotification,
+    ]
   );
 
   const loginStaff = useCallback(
@@ -405,9 +646,33 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         title: `Berhasil Masuk`,
         message: `${found.nama} (${found.role === 'admin' ? 'Admin Utama' : 'Guru BK'})`,
       });
+      const unreadForStaff = db.chats.filter(
+        (c) =>
+          c.senderRole === 'student' &&
+          !c.readByStaff &&
+          (found.role === 'admin' || c.staffId === found.id)
+      );
+      if (unreadForStaff.length > 0) {
+        if (settings.enableSoundNotification) {
+          playNotificationSound('chat');
+        }
+        if (settings.enableTextNotification) {
+          pushToast({
+            type: 'info',
+            title: `${unreadForStaff.length} Pesan Siswa Belum Dibaca`,
+            message: `Terbaru dari ${unreadForStaff[unreadForStaff.length - 1].senderName}.`,
+          });
+        }
+      }
       return { ok: true };
     },
-    [db.staff, pushToast]
+    [
+      db.chats,
+      db.staff,
+      pushToast,
+      settings.enableSoundNotification,
+      settings.enableTextNotification,
+    ]
   );
 
   const logout = useCallback(() => {
@@ -1169,10 +1434,11 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     (backupDb: SiBKDatabase, mode: 'merge' | 'replace') => {
       setDb((prev) => {
         if (mode === 'replace') {
+          const normalized = normalizeDatabase(backupDb);
           return {
-            ...backupDb,
+            ...normalized,
             activities: appendActivity(
-              backupDb,
+              normalized,
               currentStaff?.nama || 'Admin',
               'master',
               'Memulihkan seluruh database dari file cadangan JSON.'
@@ -1190,6 +1456,15 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
           requests: mergeById(prev.requests, backupDb.requests || []),
           notes: mergeById(prev.notes, backupDb.notes || []),
           guests: mergeById(prev.guests, backupDb.guests || []),
+          studentAttendances: mergeById(
+            prev.studentAttendances,
+            backupDb.studentAttendances || []
+          ),
+          classAttendances: mergeById(
+            prev.classAttendances,
+            backupDb.classAttendances || []
+          ),
+          chats: mergeById(prev.chats, backupDb.chats || []),
           activities: appendActivity(
             prev,
             currentStaff?.nama || 'Admin',
@@ -1220,6 +1495,292 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
       message: 'Seluruh data dikembalikan ke kondisi awal demo.',
     });
   }, [pushToast]);
+
+  const toggleStudentSecretaryAccess = useCallback(
+    (studentId: string, enabled: boolean) => {
+      setDb((prev) => {
+        const target = prev.students.find((s) => s.id === studentId);
+        return {
+          ...prev,
+          students: prev.students.map((s) =>
+            s.id === studentId ? { ...s, isSekretarisKelas: enabled } : s
+          ),
+          activities: appendActivity(
+            prev,
+            currentStaff?.nama || 'Guru BK',
+            'attendance',
+            `${enabled ? 'Memberikan' : 'Mencabut'} akses Sekretaris Kelas untuk ${target?.nama || 'Siswa'} (${target?.kelas || '-'}).`
+          ),
+        };
+      });
+      pushToast({
+        type: enabled ? 'success' : 'info',
+        title: enabled ? 'Akses Sekretaris Kelas Aktif' : 'Akses Sekretaris Kelas Dicabut',
+        message: enabled
+          ? 'Siswa kini dapat menginput data kehadiran harian teman sekelasnya.'
+          : 'Menu Sekretaris Kelas disembunyikan dari portal siswa tersebut.',
+      });
+    },
+    [currentStaff, pushToast]
+  );
+
+  const submitStudentAttendance = useCallback(
+    (payload: {
+      tanggal: string;
+      status: StudentAttendanceStatus;
+      keterangan: string;
+      fotoLampiranDataUrl?: string;
+      fotoLampiranName?: string;
+    }) => {
+      if (!currentStudent) return;
+      const report: StudentAttendanceReport = {
+        id: uid('att'),
+        studentId: currentStudent.id,
+        tanggal: payload.tanggal,
+        jamKirim: getCurrentTimeHHMM(),
+        status: payload.status,
+        keterangan: payload.keterangan.trim(),
+        fotoLampiranDataUrl: payload.fotoLampiranDataUrl,
+        fotoLampiranName: payload.fotoLampiranName,
+        statusVerifikasi: 'Menunggu Verifikasi',
+        createdAt: new Date().toISOString(),
+      };
+
+      setDb((prev) => ({
+        ...prev,
+        studentAttendances: [report, ...prev.studentAttendances],
+        activities: appendActivity(
+          prev,
+          `${currentStudent.nama} (${currentStudent.kelas})`,
+          'attendance',
+          `Mengirim info kehadiran (${payload.status})${payload.fotoLampiranDataUrl ? ' beserta foto lampiran' : ''}.`
+        ),
+      }));
+
+      if (settings.enableSoundNotification) {
+        playNotificationSound('attendance');
+      }
+      if (settings.enableTextNotification) {
+        pushToast({
+          type: 'success',
+          title: 'Informasi Kehadiran Terkirim',
+          message: `Status ${payload.status} untuk tanggal ${payload.tanggal} telah diteruskan ke Guru BK.`,
+        });
+      }
+    },
+    [currentStudent, pushToast, settings.enableSoundNotification, settings.enableTextNotification]
+  );
+
+  const verifyStudentAttendance = useCallback(
+    (reportId: string, statusVerifikasi: AttendanceVerifyStatus, catatanGuru?: string) => {
+      setDb((prev) => {
+        const target = prev.studentAttendances.find((a) => a.id === reportId);
+        const st = prev.students.find((s) => s.id === target?.studentId);
+        return {
+          ...prev,
+          studentAttendances: prev.studentAttendances.map((a) =>
+            a.id === reportId
+              ? {
+                  ...a,
+                  statusVerifikasi,
+                  catatanGuru: catatanGuru?.trim() || a.catatanGuru,
+                  verifiedBy: currentStaff?.nama || 'Guru BK',
+                }
+              : a
+          ),
+          activities: appendActivity(
+            prev,
+            currentStaff?.nama || 'Guru BK',
+            'attendance',
+            `Menandai info kehadiran ${st?.nama || 'Siswa'} sebagai "${statusVerifikasi}".`
+          ),
+        };
+      });
+      if (settings.enableSoundNotification) {
+        playNotificationSound('sent');
+      }
+      pushToast({
+        type: 'success',
+        title: `Status Verifikasi: ${statusVerifikasi}`,
+        message: 'Catatan verifikasi telah dikirim ke portal siswa.',
+      });
+    },
+    [currentStaff, pushToast, settings.enableSoundNotification]
+  );
+
+  const deleteStudentAttendances = useCallback(
+    (reportIds: string[]) => {
+      const idSet = new Set(reportIds);
+      setDb((prev) => ({
+        ...prev,
+        studentAttendances: prev.studentAttendances.filter((a) => !idSet.has(a.id)),
+        activities: appendActivity(
+          prev,
+          currentStaff?.nama || 'Guru BK',
+          'attendance',
+          `Menghapus ${reportIds.length} laporan kehadiran siswa.`
+        ),
+      }));
+      pushToast({
+        type: 'info',
+        title: `${reportIds.length} Laporan Kehadiran Dihapus`,
+      });
+    },
+    [currentStaff, pushToast]
+  );
+
+  const saveDailyClassAttendance = useCallback(
+    (kelas: string, tanggal: string, entries: ClassAttendanceEntry[]) => {
+      const actorName = currentStudent
+        ? `${currentStudent.nama} (Sekretaris Kelas)`
+        : currentStaff?.nama || 'Guru BK';
+
+      setDb((prev) => {
+        const existingIndex = prev.classAttendances.findIndex(
+          (c) => c.kelas === kelas && c.tanggal === tanggal
+        );
+        const record: DailyClassAttendance = {
+          id: existingIndex >= 0 ? prev.classAttendances[existingIndex].id : uid('cls-att'),
+          kelas,
+          tanggal,
+          inputByStudentId: currentStudent?.id,
+          inputByName: actorName,
+          entries,
+          updatedAt: new Date().toISOString(),
+        };
+        const updatedList =
+          existingIndex >= 0
+            ? prev.classAttendances.map((c, idx) => (idx === existingIndex ? record : c))
+            : [record, ...prev.classAttendances];
+
+        return {
+          ...prev,
+          classAttendances: updatedList,
+          activities: appendActivity(
+            prev,
+            actorName,
+            'attendance',
+            `Menyimpan presensi harian kelas ${kelas} tanggal ${tanggal} (${entries.length} siswa).`
+          ),
+        };
+      });
+
+      if (settings.enableSoundNotification) {
+        playNotificationSound('attendance');
+      }
+      pushToast({
+        type: 'success',
+        title: `Presensi Kelas ${kelas} Tersimpan`,
+        message: `Data kehadiran harian tanggal ${tanggal} berhasil diperbarui.`,
+      });
+    },
+    [currentStaff, currentStudent, pushToast, settings.enableSoundNotification]
+  );
+
+  const sendChatMessage = useCallback(
+    (payload: {
+      studentId: string;
+      staffId: string;
+      senderRole: 'student' | 'staff';
+      message: string;
+      attachmentDataUrl?: string;
+      attachmentName?: string;
+    }) => {
+      const cleanMsg = payload.message.trim();
+      if (!cleanMsg && !payload.attachmentDataUrl) return;
+
+      const senderName =
+        payload.senderRole === 'student'
+          ? db.students.find((s) => s.id === payload.studentId)?.nama || 'Siswa'
+          : db.staff.find((g) => g.id === payload.staffId)?.nama || 'Guru BK';
+
+      const newMsg: ChatMessage = {
+        id: uid('chat'),
+        studentId: payload.studentId,
+        staffId: payload.staffId,
+        senderRole: payload.senderRole,
+        senderName,
+        message: cleanMsg,
+        attachmentDataUrl: payload.attachmentDataUrl,
+        attachmentName: payload.attachmentName,
+        tanggal: getTodayISO(),
+        jam: getCurrentTimeHHMM(),
+        createdAt: new Date().toISOString(),
+        readByStudent: payload.senderRole === 'student',
+        readByStaff: payload.senderRole === 'staff',
+      };
+
+      setDb((prev) => ({
+        ...prev,
+        chats: [...prev.chats, newMsg],
+        activities: appendActivity(
+          prev,
+          senderName,
+          'chat',
+          `Mengirim pesan konsultasi ${payload.senderRole === 'student' ? 'ke Guru BK' : 'ke Siswa'}.`
+        ),
+      }));
+
+      if (settings.enableSoundNotification) {
+        playNotificationSound('sent');
+      }
+      if (settings.enableTextNotification) {
+        pushToast({
+          type: 'success',
+          title: 'Pesan Terkirim',
+          message:
+            payload.senderRole === 'student'
+              ? 'Pesan Anda telah diteruskan ke Guru BK.'
+              : 'Balasan telah dikirim ke portal siswa.',
+        });
+      }
+    },
+    [
+      db.staff,
+      db.students,
+      pushToast,
+      settings.enableSoundNotification,
+      settings.enableTextNotification,
+    ]
+  );
+
+  const markChatRead = useCallback(
+    (studentId: string, staffId: string, viewerRole: 'student' | 'staff') => {
+      setDb((prev) => {
+        let changed = false;
+        const nextChats = prev.chats.map((c) => {
+          if (c.studentId !== studentId || c.staffId !== staffId) return c;
+          if (viewerRole === 'student' && !c.readByStudent) {
+            changed = true;
+            return { ...c, readByStudent: true };
+          }
+          if (viewerRole === 'staff' && !c.readByStaff) {
+            changed = true;
+            return { ...c, readByStaff: true };
+          }
+          return c;
+        });
+        if (!changed) return prev;
+        return { ...prev, chats: nextChats };
+      });
+    },
+    []
+  );
+
+  const testNotificationSound = useCallback(() => {
+    const played = playNotificationSound('chat');
+    if (settings.enableBrowserNotification) {
+      showBrowserTextNotification(
+        `${settings.appName} — Tes Notifikasi`,
+        'Notifikasi suara & tulisan aktif untuk chat dan kehadiran.'
+      );
+    }
+    pushToast({
+      type: 'info',
+      title: played ? 'Tes Notifikasi Suara & Tulisan Berhasil' : 'Notifikasi Tulisan Aktif',
+      message: 'Bunyi lonceng dan banner tulisan akan muncul otomatis saat pesan atau laporan baru masuk.',
+    });
+  }, [pushToast, settings.appName, settings.enableBrowserNotification]);
 
   return (
     <SiBKContext.Provider
@@ -1266,6 +1827,17 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         importGuests,
         importFullBackup,
         resetDemoData,
+        toggleStudentSecretaryAccess,
+        submitStudentAttendance,
+        verifyStudentAttendance,
+        deleteStudentAttendances,
+        saveDailyClassAttendance,
+        sendChatMessage,
+        markChatRead,
+        testNotificationSound,
+        selectedStudentInfoId,
+        openStudentInfo,
+        closeStudentInfo,
       }}
     >
       {children}
