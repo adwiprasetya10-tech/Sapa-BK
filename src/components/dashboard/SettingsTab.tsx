@@ -506,10 +506,13 @@ export const SettingsTab: React.FC = () => {
       {/* SECTION 2: HALAMAN DEPAN & AKSES */}
       {section === 'gateway' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
+          <div className="lg:col-span-5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
             <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Teks & Showcase Halaman Depan
+              Pengaturan Awal Gerbang Login
             </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Halaman depan berfokus langsung pada akses masuk Siswa, Guru BK/Admin, dan Buku Tamu.
+            </p>
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
@@ -529,50 +532,14 @@ export const SettingsTab: React.FC = () => {
                 <option value="tamu">Tab 3: Buku Tamu Digital</option>
               </select>
             </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
-                Label Atas Panel Kiri (Hero Badge)
-              </label>
-              <input
-                type="text"
-                value={settings.heroBadge}
-                onChange={(e) => updateSettings({ heroBadge: e.target.value })}
-                className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
-                Judul Utama Halaman Depan
-              </label>
-              <input
-                type="text"
-                value={settings.heroTitle}
-                onChange={(e) => updateSettings({ heroTitle: e.target.value })}
-                className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
-                Deskripsi Singkat Halaman Depan
-              </label>
-              <textarea
-                rows={3}
-                value={settings.heroDescription}
-                onChange={(e) => updateSettings({ heroDescription: e.target.value })}
-                className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white resize-none"
-              />
-            </div>
           </div>
 
-          <div className="lg:col-span-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-3">
+          <div className="lg:col-span-7 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-3">
             <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
               Kontrol Fitur & Visibilitas Gerbang Masuk
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Aktifkan atau sembunyikan bagian tertentu sesuai kebutuhan sekolah (misalnya saat mode Kiosk Buku Tamu atau produksi).
+              Aktifkan atau sembunyikan tab akses sesuai kebutuhan sekolah (misalnya saat mode Kiosk Buku Tamu atau produksi).
             </p>
 
             <div className="space-y-2.5 pt-2">
@@ -593,24 +560,12 @@ export const SettingsTab: React.FC = () => {
                   onChange: () => handleToggleGatewayTab('showGuestTab'),
                 },
                 {
-                  label: 'Tampilkan Panel Showcase Kiri (Gradasi Warna)',
-                  checked: settings.showHeroShowcase,
-                  onChange: () =>
-                    updateSettings({ showHeroShowcase: !settings.showHeroShowcase }),
-                },
-                {
                   label: 'Tampilkan Tombol "Isi Data Demo" di Form Login',
                   checked: settings.showDemoLoginButtons,
                   onChange: () =>
                     updateSettings({
                       showDemoLoginButtons: !settings.showDemoLoginButtons,
                     }),
-                },
-                {
-                  label: 'Tampilkan Statistik Guru BK & Tamu di Halaman Depan',
-                  checked: settings.showStatsOnGateway,
-                  onChange: () =>
-                    updateSettings({ showStatsOnGateway: !settings.showStatsOnGateway }),
                 },
               ].map((item, idx) => (
                 <label

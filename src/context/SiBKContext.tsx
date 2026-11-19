@@ -5,7 +5,12 @@ import {
   getTodayISO,
 } from '../data/seedData';
 import {
-  ActivityLog,
+  applySiBKAction,
+  normalizeAppSettings,
+  normalizeDatabase,
+} from '../shared/sibkActions';
+import type { SiBKAction } from '../shared/sibkActions';
+import {
   AppSettings,
   AppThemeId,
   AttendanceVerifyStatus,
@@ -44,6 +49,16 @@ import { getThemeMeta } from '../utils/themeRegistry';
 const DB_STORAGE_KEY = 'sibk_database_v2';
 const SESSION_STORAGE_KEY = 'sibk_session_v2';
 const THEME_STORAGE_KEY = 'sibk_theme_v1';
+
+interface ServerSyncEnvelope {
+  type?: 'state:init' | 'state:sync';
+  ok?: boolean;
+  revision?: number;
+  originClientId?: string;
+  actionType?: string;
+  db: Partial<SiBKDatabase>;
+  settings: Partial<AppSettings>;
+}
 
 interface SiBKContextValue {
   db: SiBKDatabase;
@@ -158,61 +173,7 @@ interface SiBKContextValue {
 
 const SiBKContext = createContext<SiBKContextValue | null>(null);
 
-function normalizeDatabase(rawDb: Partial<SiBKDatabase>): SiBKDatabase {
-  const initial = createInitialDatabase();
-  const initialById = new Map(initial.students.map((s) => [s.id, s]));
-  const isFirstAttendanceMigration =
-    !Array.isArray(rawDb.studentAttendances) &&
-    !Array.isArray(rawDb.classAttendances) &&
-    !Array.isArray(rawDb.chats);
-
-  const baseStudents = Array.isArray(rawDb.students) ? rawDb.students : initial.students;
-  const mergedRoster = isFirstAttendanceMigration
-    ? (() => {
-        const existingIds = new Set(baseStudents.map((s) => s.id));
-        const extraClassmates = initial.students.filter((s) => !existingIds.has(s.id));
-        return [
-          ...baseStudents.map((s) =>
-            s.id === 'std-1' && s.isSekretarisKelas === undefined
-              ? { ...s, isSekretarisKelas: true }
-              : s
-          ),
-          ...extraClassmates,
-        ];
-      })()
-    : baseStudents;
-
-  const students = mergedRoster.map((s) => {
-    const seedMatch = initialById.get(s.id);
-    if (!seedMatch) return s;
-    return {
-      ...s,
-      noAbsen: s.noAbsen ?? seedMatch.noAbsen,
-      ttl: s.ttl ?? seedMatch.ttl,
-      email: s.email ?? seedMatch.email,
-      noHp: s.noHp ?? seedMatch.noHp,
-      linkFoto: s.linkFoto ?? seedMatch.linkFoto,
-    };
-  });
-
-  return {
-    students,
-    staff: Array.isArray(rawDb.staff) ? rawDb.staff : initial.staff,
-    requests: Array.isArray(rawDb.requests) ? rawDb.requests : initial.requests,
-    notes: Array.isArray(rawDb.notes) ? rawDb.notes : initial.notes,
-    guests: Array.isArray(rawDb.guests) ? rawDb.guests : initial.guests,
-    activities: Array.isArray(rawDb.activities) ? rawDb.activities : initial.activities,
-    studentAttendances: Array.isArray(rawDb.studentAttendances)
-      ? rawDb.studentAttendances
-      : initial.studentAttendances,
-    classAttendances: Array.isArray(rawDb.classAttendances)
-      ? rawDb.classAttendances
-      : initial.classAttendances,
-    chats: Array.isArray(rawDb.chats) ? rawDb.chats : initial.chats,
-  };
-}
-
-function loadDatabase(): SiBKDatabase {
+function loadCachedDatabase(): SiBKDatabase {
   try {
     const raw = localStorage.getItem(DB_STORAGE_KEY);
     if (raw) {
@@ -229,9 +190,7 @@ function loadDatabase(): SiBKDatabase {
   } catch {
     // fallback
   }
-  const initial = createInitialDatabase();
-  localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(initial));
-  return initial;
+  return createInitialDatabase();
 }
 
 function loadSession(): AuthSession {
@@ -261,12 +220,26 @@ function uid(prefix: string): string {
 }
 
 export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [db, setDb] = useState<SiBKDatabase>(() => loadDatabase());
+  const [db, setDb] = useState<SiBKDatabase>(() => loadCachedDatabase());
   const [session, setSession] = useState<AuthSession>(() => loadSession());
   const [theme, setThemeState] = useState<AppThemeId>(() => loadTheme());
   const [settings, setSettings] = useState<AppSettings>(() => loadAppSettings());
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [selectedStudentInfoId, setSelectedStudentInfoId] = useState<string | null>(null);
+
+  const clientIdRef = useRef<string>(uid('client'));
+  const revisionRef = useRef<number>(0);
+  const pendingActionsRef = useRef<number>(0);
+  const hasHydratedRef = useRef<boolean>(false);
+  const actionQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const wsRef = useRef<WebSocket | null>(null);
+
+  const dbRef = useRef(db);
+  dbRef.current = db;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   const openStudentInfo = useCallback((studentId: string) => {
     setSelectedStudentInfoId(studentId);
@@ -337,13 +310,6 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [settings, theme]);
 
-  const dbRef = useRef(db);
-  dbRef.current = db;
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
-  const sessionRef = useRef(session);
-  sessionRef.current = session;
-
   useEffect(() => {
     registerAudioUnlock();
   }, []);
@@ -360,128 +326,347 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, 4500);
   }, []);
 
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === DB_STORAGE_KEY && e.newValue) {
-        try {
-          const nextDb = normalizeDatabase(JSON.parse(e.newValue));
-          const prevDb = dbRef.current;
-          const activeSession = sessionRef.current;
-          const cfg = settingsRef.current;
+  const notifyIncomingChanges = useCallback(
+    (prevDb: SiBKDatabase, nextDb: SiBKDatabase, cfg: AppSettings) => {
+      const activeSession = sessionRef.current;
+      if (!activeSession) return;
 
-          // Detect newly arrived chat messages from the other party across tabs
-          const prevChatIds = new Set(prevDb.chats.map((c) => c.id));
-          const newChats = nextDb.chats.filter((c) => !prevChatIds.has(c.id));
+      const prevChatIds = new Set(prevDb.chats.map((c) => c.id));
+      const newChats = nextDb.chats.filter((c) => !prevChatIds.has(c.id));
 
-          if (activeSession?.type === 'student') {
-            const incomingForStudent = newChats.filter(
-              (c) => c.studentId === activeSession.studentId && c.senderRole === 'staff'
-            );
-            if (incomingForStudent.length > 0) {
-              const latest = incomingForStudent[incomingForStudent.length - 1];
-              if (cfg.enableSoundNotification) playNotificationSound('chat');
-              if (cfg.enableTextNotification) {
-                pushToast({
-                  type: 'info',
-                  title: `Pesan Baru dari ${latest.senderName}`,
-                  message: latest.message || 'Mengirim lampiran foto',
-                });
-              }
-              if (cfg.enableBrowserNotification) {
-                showBrowserTextNotification(
-                  `${cfg.appName}: Pesan dari ${latest.senderName}`,
-                  latest.message || 'Mengirim lampiran foto'
-                );
-              }
-            }
-
-            // Detect verified attendance update for this student
-            const verifiedNow = nextDb.studentAttendances.find((att) => {
-              if (att.studentId !== activeSession.studentId) return false;
-              const prevAtt = prevDb.studentAttendances.find((p) => p.id === att.id);
-              return (
-                prevAtt &&
-                prevAtt.statusVerifikasi !== att.statusVerifikasi &&
-                att.statusVerifikasi !== 'Menunggu Verifikasi'
-              );
+      if (activeSession.type === 'student') {
+        const incomingForStudent = newChats.filter(
+          (c) => c.studentId === activeSession.studentId && c.senderRole === 'staff'
+        );
+        if (incomingForStudent.length > 0) {
+          const latest = incomingForStudent[incomingForStudent.length - 1];
+          if (cfg.enableSoundNotification) playNotificationSound('chat');
+          if (cfg.enableTextNotification) {
+            pushToast({
+              type: 'info',
+              title: `Pesan Baru dari ${latest.senderName}`,
+              message: latest.message || 'Mengirim lampiran foto',
             });
-            if (verifiedNow) {
-              if (cfg.enableSoundNotification) playNotificationSound('attendance');
-              if (cfg.enableTextNotification) {
-                pushToast({
-                  type: 'success',
-                  title: `Info Kehadiran ${verifiedNow.statusVerifikasi}`,
-                  message: verifiedNow.catatanGuru || `Laporan tanggal ${verifiedNow.tanggal} telah diperiksa.`,
-                });
-              }
-            }
-          } else if (activeSession?.type === 'staff') {
-            const staffUser = nextDb.staff.find((g) => g.id === activeSession.staffId);
-            const isAdmin = staffUser?.role === 'admin';
-            const incomingForStaff = newChats.filter(
-              (c) =>
-                c.senderRole === 'student' &&
-                (isAdmin || c.staffId === activeSession.staffId)
+          }
+          if (cfg.enableBrowserNotification) {
+            showBrowserTextNotification(
+              `${cfg.appName}: Pesan dari ${latest.senderName}`,
+              latest.message || 'Mengirim lampiran foto'
             );
-            if (incomingForStaff.length > 0) {
-              const latest = incomingForStaff[incomingForStaff.length - 1];
-              if (cfg.enableSoundNotification) playNotificationSound('chat');
-              if (cfg.enableTextNotification) {
-                pushToast({
-                  type: 'info',
-                  title: `Chat Siswa: ${latest.senderName}`,
-                  message: latest.message || 'Mengirim lampiran foto',
-                });
-              }
-              if (cfg.enableBrowserNotification) {
-                showBrowserTextNotification(
-                  `${cfg.appName}: Chat dari ${latest.senderName}`,
-                  latest.message || 'Mengirim lampiran foto'
-                );
-              }
-            }
+          }
+        }
 
-            // Detect newly submitted student attendance reports across tabs
-            const prevAttIds = new Set(prevDb.studentAttendances.map((a) => a.id));
-            const newAtts = nextDb.studentAttendances.filter((a) => !prevAttIds.has(a.id));
-            if (newAtts.length > 0) {
-              const latestAtt = newAtts[0];
-              const st = nextDb.students.find((s) => s.id === latestAtt.studentId);
-              if (isAdmin || st?.guruBkId === activeSession.staffId) {
-                if (cfg.enableSoundNotification) playNotificationSound('attendance');
-                if (cfg.enableTextNotification) {
-                  pushToast({
-                    type: 'info',
-                    title: `Info Kehadiran Baru (${latestAtt.status})`,
-                    message: `${st?.nama || 'Siswa'} (${st?.kelas || '-'}) mengirim laporan kehadiran.`,
-                  });
-                }
-                if (cfg.enableBrowserNotification) {
-                  showBrowserTextNotification(
-                    `${cfg.appName}: Info Kehadiran Baru`,
-                    `${st?.nama || 'Siswa'} (${latestAtt.status})`
-                  );
-                }
-              }
+        const verifiedNow = nextDb.studentAttendances.find((att) => {
+          if (att.studentId !== activeSession.studentId) return false;
+          const prevAtt = prevDb.studentAttendances.find((p) => p.id === att.id);
+          return (
+            prevAtt &&
+            prevAtt.statusVerifikasi !== att.statusVerifikasi &&
+            att.statusVerifikasi !== 'Menunggu Verifikasi'
+          );
+        });
+        if (verifiedNow) {
+          if (cfg.enableSoundNotification) playNotificationSound('attendance');
+          if (cfg.enableTextNotification) {
+            pushToast({
+              type: 'success',
+              title: `Info Kehadiran ${verifiedNow.statusVerifikasi}`,
+              message:
+                verifiedNow.catatanGuru ||
+                `Laporan tanggal ${verifiedNow.tanggal} telah diperiksa.`,
+            });
+          }
+        }
+
+        const scheduledReq = nextDb.requests.find((req) => {
+          if (req.studentId !== activeSession.studentId) return false;
+          const prevReq = prevDb.requests.find((p) => p.id === req.id);
+          return (
+            prevReq &&
+            prevReq.status !== req.status &&
+            req.status === 'Dijadwalkan'
+          );
+        });
+        if (scheduledReq) {
+          if (cfg.enableSoundNotification) playNotificationSound('attendance');
+          if (cfg.enableTextNotification) {
+            pushToast({
+              type: 'success',
+              title: 'Jadwal Konseling Diterbitkan',
+              message: `${scheduledReq.jadwalTanggal || ''} pukul ${scheduledReq.jadwalJam || ''} · ${scheduledReq.ruangPertemuan || 'Ruang BK'}`,
+            });
+          }
+        }
+      } else if (activeSession.type === 'staff') {
+        const staffUser = nextDb.staff.find((g) => g.id === activeSession.staffId);
+        const isAdmin = staffUser?.role === 'admin';
+        const incomingForStaff = newChats.filter(
+          (c) =>
+            c.senderRole === 'student' &&
+            (isAdmin || c.staffId === activeSession.staffId)
+        );
+        if (incomingForStaff.length > 0) {
+          const latest = incomingForStaff[incomingForStaff.length - 1];
+          if (cfg.enableSoundNotification) playNotificationSound('chat');
+          if (cfg.enableTextNotification) {
+            pushToast({
+              type: 'info',
+              title: `Chat Siswa: ${latest.senderName}`,
+              message: latest.message || 'Mengirim lampiran foto',
+            });
+          }
+          if (cfg.enableBrowserNotification) {
+            showBrowserTextNotification(
+              `${cfg.appName}: Chat dari ${latest.senderName}`,
+              latest.message || 'Mengirim lampiran foto'
+            );
+          }
+        }
+
+        const prevAttIds = new Set(prevDb.studentAttendances.map((a) => a.id));
+        const newAtts = nextDb.studentAttendances.filter((a) => !prevAttIds.has(a.id));
+        if (newAtts.length > 0) {
+          const latestAtt = newAtts[0];
+          const st = nextDb.students.find((s) => s.id === latestAtt.studentId);
+          if (isAdmin || st?.guruBkId === activeSession.staffId) {
+            if (cfg.enableSoundNotification) playNotificationSound('attendance');
+            if (cfg.enableTextNotification) {
+              pushToast({
+                type: 'info',
+                title: `Info Kehadiran Baru (${latestAtt.status})`,
+                message: `${st?.nama || 'Siswa'} (${st?.kelas || '-'}) mengirim laporan kehadiran.`,
+              });
+            }
+            if (cfg.enableBrowserNotification) {
+              showBrowserTextNotification(
+                `${cfg.appName}: Info Kehadiran Baru`,
+                `${st?.nama || 'Siswa'} (${latestAtt.status})`
+              );
             }
           }
+        }
 
-          setDb(nextDb);
-        } catch {
-          // ignore
+        const prevReqIds = new Set(prevDb.requests.map((r) => r.id));
+        const newReqs = nextDb.requests.filter(
+          (r) =>
+            !prevReqIds.has(r.id) &&
+            (isAdmin || r.guruTujuanId === activeSession.staffId)
+        );
+        if (newReqs.length > 0) {
+          const latestReq = newReqs[0];
+          const st = nextDb.students.find((s) => s.id === latestReq.studentId);
+          if (cfg.enableSoundNotification) playNotificationSound('attendance');
+          if (cfg.enableTextNotification) {
+            pushToast({
+              type: 'info',
+              title: `Permohonan Konseling Baru`,
+              message: `${st?.nama || 'Siswa'} (${latestReq.jenisKeperluan} · ${latestReq.tingkatUrgensi})`,
+            });
+          }
+        }
+
+        const prevGuestIds = new Set(prevDb.guests.map((g) => g.id));
+        const newGuests = nextDb.guests.filter((g) => !prevGuestIds.has(g.id));
+        if (newGuests.length > 0) {
+          const latestGuest = newGuests[0];
+          if (cfg.enableTextNotification) {
+            pushToast({
+              type: 'info',
+              title: `Tamu Check-in (${latestGuest.nomorAntrean})`,
+              message: `${latestGuest.namaLengkap} menemui ${latestGuest.pihakDituju}`,
+            });
+          }
         }
       }
-      if (e.key === SETTINGS_STORAGE_KEY && e.newValue) {
-        try {
-          setSettings({ ...DEFAULT_APP_SETTINGS, ...JSON.parse(e.newValue) });
-        } catch {
-          // ignore
+    },
+    [pushToast]
+  );
+
+  const applyIncomingServerState = useCallback(
+    (payload: ServerSyncEnvelope, source: 'init' | 'sync' | 'poll') => {
+      if (!payload || !payload.db || !payload.settings) return;
+      const incomingRev = typeof payload.revision === 'number' ? payload.revision : 0;
+      if (incomingRev > 0 && incomingRev < revisionRef.current) {
+        return;
+      }
+
+      const nextDb = normalizeDatabase(payload.db);
+      const nextSettings = normalizeAppSettings(payload.settings);
+      const isFromAnotherDevice = payload.originClientId !== clientIdRef.current;
+
+      if (hasHydratedRef.current && isFromAnotherDevice && source !== 'init') {
+        notifyIncomingChanges(dbRef.current, nextDb, nextSettings);
+      }
+
+      if (incomingRev > 0) {
+        revisionRef.current = Math.max(revisionRef.current, incomingRev);
+      }
+      hasHydratedRef.current = true;
+
+      if (pendingActionsRef.current === 0 || source === 'init' || isFromAnotherDevice) {
+        dbRef.current = nextDb;
+        settingsRef.current = nextSettings;
+        setDb(nextDb);
+        setSettings(nextSettings);
+      }
+    },
+    [notifyIncomingChanges]
+  );
+
+  const fetchServerState = useCallback(async () => {
+    try {
+      const res = await fetch('/api/state', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = (await res.json()) as ServerSyncEnvelope;
+      applyIncomingServerState(data, hasHydratedRef.current ? 'poll' : 'init');
+    } catch {
+      // ignore temporary network hiccup
+    }
+  }, [applyIncomingServerState]);
+
+  useEffect(() => {
+    let disposed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+
+    fetchServerState();
+
+    const connectWs = () => {
+      if (disposed) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+      try {
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          attempt = 0;
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data as string) as ServerSyncEnvelope;
+            if (msg.type === 'state:init') {
+              applyIncomingServerState(msg, 'init');
+            } else if (msg.type === 'state:sync') {
+              applyIncomingServerState(msg, 'sync');
+            }
+          } catch {
+            // ignore malformed socket frame
+          }
+        };
+
+        ws.onclose = () => {
+          if (wsRef.current === ws) {
+            wsRef.current = null;
+          }
+          if (disposed) return;
+          attempt += 1;
+          const delay = Math.min(500 * Math.pow(1.5, attempt - 1), 5000);
+          reconnectTimer = setTimeout(connectWs, delay);
+        };
+
+        ws.onerror = () => {
+          ws.close();
+        };
+      } catch {
+        attempt += 1;
+        reconnectTimer = setTimeout(connectWs, 2500);
+      }
+    };
+
+    connectWs();
+
+    const handleVisibilityOrOnline = () => {
+      if (document.visibilityState === 'visible' || navigator.onLine) {
+        fetchServerState();
+        if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+          if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+          }
+          connectWs();
         }
       }
     };
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, [pushToast]);
+
+    window.addEventListener('online', handleVisibilityOrOnline);
+    document.addEventListener('visibilitychange', handleVisibilityOrOnline);
+
+    // Safety polling fallback only when WebSocket is disconnected
+    const fallbackTimer = setInterval(() => {
+      if (wsRef.current?.readyState !== WebSocket.OPEN) {
+        fetchServerState();
+      }
+    }, 10000);
+
+    return () => {
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearInterval(fallbackTimer);
+      window.removeEventListener('online', handleVisibilityOrOnline);
+      document.removeEventListener('visibilitychange', handleVisibilityOrOnline);
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
+  }, [applyIncomingServerState, fetchServerState]);
+
+  const dispatchSharedAction = useCallback(
+    (action: SiBKAction) => {
+      const optimisticState = applySiBKAction(
+        { db: dbRef.current, settings: settingsRef.current },
+        action
+      );
+      if (optimisticState.db !== dbRef.current) {
+        dbRef.current = optimisticState.db;
+        setDb(optimisticState.db);
+      }
+      if (optimisticState.settings !== settingsRef.current) {
+        settingsRef.current = optimisticState.settings;
+        setSettings(optimisticState.settings);
+      }
+
+      pendingActionsRef.current += 1;
+      actionQueueRef.current = actionQueueRef.current
+        .then(async () => {
+          try {
+            const res = await fetch('/api/action', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action,
+                clientId: clientIdRef.current,
+              }),
+            });
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}`);
+            }
+            const data = (await res.json()) as ServerSyncEnvelope;
+            if (typeof data.revision === 'number') {
+              revisionRef.current = Math.max(revisionRef.current, data.revision);
+            }
+            hasHydratedRef.current = true;
+            if (pendingActionsRef.current <= 1 && data.db && data.settings) {
+              const authDb = normalizeDatabase(data.db);
+              const authSettings = normalizeAppSettings(data.settings);
+              dbRef.current = authDb;
+              settingsRef.current = authSettings;
+              setDb(authDb);
+              setSettings(authSettings);
+            }
+          } catch {
+            fetchServerState();
+          } finally {
+            pendingActionsRef.current = Math.max(0, pendingActionsRef.current - 1);
+          }
+        })
+        .catch(() => {
+          pendingActionsRef.current = Math.max(0, pendingActionsRef.current - 1);
+        });
+    },
+    [fetchServerState]
+  );
 
   const setTheme = useCallback(
     (themeId: AppThemeId) => {
@@ -498,32 +683,32 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateSettings = useCallback(
     (updates: Partial<AppSettings>, silent = true) => {
-      setSettings((prev) => ({ ...prev, ...updates }));
+      dispatchSharedAction({ type: 'SETTINGS_UPDATE', payload: { updates } });
       if (!silent) {
         pushToast({
           type: 'success',
           title: 'Pengaturan Sistem Disimpan',
-          message: 'Perubahan diterapkan ke seluruh halaman secara langsung.',
+          message: 'Perubahan diterapkan ke seluruh perangkat secara langsung.',
         });
       }
     },
-    [pushToast]
+    [dispatchSharedAction, pushToast]
   );
 
   const replaceSettings = useCallback(
     (next: AppSettings) => {
-      setSettings(next);
+      dispatchSharedAction({ type: 'SETTINGS_REPLACE', payload: { next } });
       pushToast({
         type: 'success',
         title: 'Pengaturan Diperbarui',
-        message: 'Konfigurasi aplikasi telah diterapkan.',
+        message: 'Konfigurasi aplikasi telah disinkronkan ke seluruh perangkat.',
       });
     },
-    [pushToast]
+    [dispatchSharedAction, pushToast]
   );
 
   const resetSettings = useCallback(() => {
-    setSettings(DEFAULT_APP_SETTINGS);
+    dispatchSharedAction({ type: 'SETTINGS_RESET' });
     try {
       localStorage.removeItem(SETTINGS_STORAGE_KEY);
     } catch {
@@ -534,7 +719,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
       title: 'Pengaturan Direset ke Default',
       message: 'Logo web, identitas, dan konfigurasi dikembalikan ke setelan awal.',
     });
-  }, [pushToast]);
+  }, [dispatchSharedAction, pushToast]);
 
   const currentStudent =
     session?.type === 'student'
@@ -545,23 +730,6 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     session?.type === 'staff'
       ? db.staff.find((g) => g.id === session.staffId) || null
       : null;
-
-  const appendActivity = (
-    prev: SiBKDatabase,
-    actor: string,
-    type: ActivityLog['type'],
-    description: string
-  ): ActivityLog[] => {
-    const entry: ActivityLog = {
-      id: uid('act'),
-      timestamp: getCurrentTimeHHMM(),
-      tanggal: getTodayISO(),
-      actor,
-      type,
-      description,
-    };
-    return [entry, ...prev.activities].slice(0, 30);
-  };
 
   const loginStudent = useCallback(
     (nis: string, nisn: string) => {
@@ -694,7 +862,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }) => {
       if (!currentStudent) return;
       const targetGuru = db.staff.find((g) => g.id === payload.guruTujuanId);
-      const newReq: CounselingRequest = {
+      const request: CounselingRequest = {
         id: uid('req'),
         studentId: currentStudent.id,
         guruTujuanId: payload.guruTujuanId,
@@ -707,16 +875,14 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         jamPengajuan: getCurrentTimeHHMM(),
       };
 
-      setDb((prev) => ({
-        ...prev,
-        requests: [newReq, ...prev.requests],
-        activities: appendActivity(
-          prev,
-          `${currentStudent.nama} (${currentStudent.kelas})`,
-          'request',
-          `Mengajukan layanan ${payload.jenisKeperluan} (${payload.tingkatUrgensi}) kepada ${targetGuru?.nama || 'Guru BK'}.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'REQUEST_SUBMIT',
+        payload: {
+          request,
+          actorLabel: `${currentStudent.nama} (${currentStudent.kelas})`,
+          targetGuruName: targetGuru?.nama || 'Guru BK',
+        },
+      });
 
       pushToast({
         type: 'success',
@@ -724,7 +890,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         message: `Permohonan ${payload.jenisKeperluan} menunggu konfirmasi ${targetGuru?.nama || 'Guru BK'}.`,
       });
     },
-    [currentStudent, db.staff, pushToast]
+    [currentStudent, db.staff, dispatchSharedAction, pushToast]
   );
 
   const scheduleRequest = useCallback(
@@ -737,27 +903,13 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         catatanGuru: string;
       }
     ) => {
-      setDb((prev) => {
-        const req = prev.requests.find((r) => r.id === requestId);
-        const student = prev.students.find((s) => s.id === req?.studentId);
-        return {
-          ...prev,
-          requests: prev.requests.map((r) =>
-            r.id === requestId
-              ? {
-                  ...r,
-                  status: 'Dijadwalkan',
-                  ...payload,
-                }
-              : r
-          ),
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Guru BK',
-            'schedule',
-            `Menjadwalkan sesi konseling untuk ${student?.nama || 'Siswa'} pada ${payload.jadwalTanggal} pukul ${payload.jadwalJam}.`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'REQUEST_SCHEDULE',
+        payload: {
+          requestId,
+          ...payload,
+          actorName: currentStaff?.nama || 'Guru BK',
+        },
       });
       pushToast({
         type: 'success',
@@ -765,106 +917,74 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         message: 'Jadwal pertemuan telah dikirim ke portal siswa.',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const updateRequest = useCallback(
     (requestId: string, updates: Partial<CounselingRequest>) => {
-      setDb((prev) => ({
-        ...prev,
-        requests: prev.requests.map((r) =>
-          r.id === requestId ? { ...r, ...updates } : r
-        ),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Guru BK',
-          'schedule',
-          `Memperbarui detail permohonan konseling.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'REQUEST_UPDATE',
+        payload: {
+          requestId,
+          updates,
+          actorName: currentStaff?.nama || 'Guru BK',
+        },
+      });
       pushToast({
         type: 'success',
         title: 'Antrean Diperbarui',
         message: 'Perubahan data permohonan konseling berhasil disimpan.',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const deleteRequests = useCallback(
     (requestIds: string[]) => {
-      const idSet = new Set(requestIds);
-      setDb((prev) => ({
-        ...prev,
-        requests: prev.requests.filter((r) => !idSet.has(r.id)),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Guru BK',
-          'schedule',
-          `Menghapus ${requestIds.length} data antrean konseling.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'REQUEST_DELETE_BULK',
+        payload: {
+          requestIds,
+          actorName: currentStaff?.nama || 'Guru BK',
+        },
+      });
       pushToast({
         type: 'info',
         title: `${requestIds.length} Antrean Dihapus`,
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const completeRequestsBulk = useCallback(
     (requestIds: string[]) => {
-      const idSet = new Set(requestIds);
-      setDb((prev) => ({
-        ...prev,
-        requests: prev.requests.map((r) =>
-          idSet.has(r.id)
-            ? {
-                ...r,
-                status: 'Selesai',
-                catatanGuru: r.catatanGuru || 'Ditandai selesai secara kolektif.',
-              }
-            : r
-        ),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Guru BK',
-          'schedule',
-          `Menyelesaikan ${requestIds.length} permohonan konseling terpilih.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'REQUEST_COMPLETE_BULK',
+        payload: {
+          requestIds,
+          actorName: currentStaff?.nama || 'Guru BK',
+        },
+      });
       pushToast({
         type: 'success',
         title: `${requestIds.length} Antrean Selesai`,
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const transferRequest = useCallback(
     (requestId: string, newGuruId: string, alasan: string) => {
       const targetGuru = db.staff.find((g) => g.id === newGuruId);
-      setDb((prev) => {
-        const req = prev.requests.find((r) => r.id === requestId);
-        const student = prev.students.find((s) => s.id === req?.studentId);
-        return {
-          ...prev,
-          requests: prev.requests.map((r) =>
-            r.id === requestId
-              ? {
-                  ...r,
-                  guruTujuanId: newGuruId,
-                  catatanPengalihan: `Dialihkan dari ${currentStaff?.nama || 'Guru BK'}: ${alasan}`,
-                }
-              : r
-          ),
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Guru BK',
-            'schedule',
-            `Mengalihkan permohonan ${student?.nama || 'Siswa'} kepada ${targetGuru?.nama || 'Guru BK lain'}.`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'REQUEST_TRANSFER',
+        payload: {
+          requestId,
+          newGuruId,
+          alasan,
+          actorName: currentStaff?.nama || 'Guru BK',
+          targetGuruName: targetGuru?.nama || 'Guru BK lain',
+        },
       });
       pushToast({
         type: 'info',
@@ -872,39 +992,25 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         message: `Antrean diteruskan ke ${targetGuru?.nama || 'Guru BK tujuan'}.`,
       });
     },
-    [currentStaff, db.staff, pushToast]
+    [currentStaff, db.staff, dispatchSharedAction, pushToast]
   );
 
   const completeRequest = useCallback(
     (requestId: string, catatanGuru?: string) => {
-      setDb((prev) => {
-        const req = prev.requests.find((r) => r.id === requestId);
-        const student = prev.students.find((s) => s.id === req?.studentId);
-        return {
-          ...prev,
-          requests: prev.requests.map((r) =>
-            r.id === requestId
-              ? {
-                  ...r,
-                  status: 'Selesai',
-                  catatanGuru: catatanGuru || r.catatanGuru || 'Sesi konseling telah dilaksanakan.',
-                }
-              : r
-          ),
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Guru BK',
-            'schedule',
-            `Menyelesaikan sesi ${req?.jenisKeperluan || 'konseling'} untuk ${student?.nama || 'Siswa'}.`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'REQUEST_COMPLETE',
+        payload: {
+          requestId,
+          catatanGuru,
+          actorName: currentStaff?.nama || 'Guru BK',
+        },
       });
       pushToast({
         type: 'success',
         title: 'Layanan Ditandai Selesai',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const addCounselingNote = useCallback(
@@ -936,31 +1042,12 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: new Date().toISOString(),
       };
 
-      setDb((prev) => {
-        const student = prev.students.find((s) => s.id === payload.studentId);
-        const updatedRequests = payload.requestId
-          ? prev.requests.map((r) =>
-              r.id === payload.requestId
-                ? {
-                    ...r,
-                    status: 'Selesai' as const,
-                    catatanGuru: r.catatanGuru || 'Sesi selesai dan tercatat dalam rekam jejak BK.',
-                  }
-                : r
-            )
-          : prev.requests;
-
-        return {
-          ...prev,
-          notes: [newNote, ...prev.notes],
-          requests: updatedRequests,
-          activities: appendActivity(
-            prev,
-            currentStaff.nama,
-            'note',
-            `Menambahkan catatan ${payload.isRahasia ? 'rahasia ' : ''}(${payload.statusPerkembangan}) pada ${student?.nama || 'Siswa'}.`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'NOTE_ADD',
+        payload: {
+          note: newNote,
+          actorName: currentStaff.nama,
+        },
       });
 
       pushToast({
@@ -971,47 +1058,42 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
           : 'Rekam jejak perkembangan siswa diperbarui.',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const updateCounselingNote = useCallback(
     (noteId: string, updates: Partial<CounselingNote>) => {
-      setDb((prev) => ({
-        ...prev,
-        notes: prev.notes.map((n) => (n.id === noteId ? { ...n, ...updates } : n)),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Guru BK',
-          'note',
-          `Memperbarui catatan konseling siswa.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'NOTE_UPDATE',
+        payload: {
+          noteId,
+          updates,
+          actorName: currentStaff?.nama || 'Guru BK',
+        },
+      });
       pushToast({
         type: 'success',
         title: 'Catatan Konseling Diperbarui',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const deleteCounselingNote = useCallback(
     (noteId: string) => {
-      setDb((prev) => ({
-        ...prev,
-        notes: prev.notes.filter((n) => n.id !== noteId),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Guru BK',
-          'note',
-          `Menghapus satu entri catatan konseling.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'NOTE_DELETE',
+        payload: {
+          noteId,
+          actorName: currentStaff?.nama || 'Guru BK',
+        },
+      });
       pushToast({
         type: 'info',
         title: 'Catatan Konseling Dihapus',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const registerGuestVisit = useCallback(
@@ -1024,8 +1106,8 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
       keperluan: string;
     }): GuestVisit => {
       const today = getTodayISO();
-      const todayCount = db.guests.filter((g) => g.tanggal === today).length + 1;
-      const rawPrefix = (settings.guestQueuePrefix || 'TM-').trim().toUpperCase();
+      const todayCount = dbRef.current.guests.filter((g) => g.tanggal === today).length + 1;
+      const rawPrefix = (settingsRef.current.guestQueuePrefix || 'TM-').trim().toUpperCase();
       const prefix = rawPrefix.endsWith('-') ? rawPrefix : `${rawPrefix}-`;
       const nomorAntrean = `${prefix}${String(todayCount).padStart(3, '0')}`;
       const visit: GuestVisit = {
@@ -1042,16 +1124,13 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         status: 'Berkunjung',
       };
 
-      setDb((prev) => ({
-        ...prev,
-        guests: [visit, ...prev.guests],
-        activities: appendActivity(
-          prev,
-          `${visit.namaLengkap} (${visit.kategori})`,
-          'guest',
-          `Check-in Buku Tamu Digital (${visit.nomorAntrean}) menemui ${visit.pihakDituju}.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'GUEST_REGISTER',
+        payload: {
+          visit,
+          queuePrefix: settingsRef.current.guestQueuePrefix || 'TM-',
+        },
+      });
 
       pushToast({
         type: 'success',
@@ -1061,46 +1140,37 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return visit;
     },
-    [db.guests, pushToast, settings.guestQueuePrefix]
+    [dispatchSharedAction, pushToast]
   );
 
   const updateGuestVisit = useCallback(
     (guestId: string, updates: Partial<GuestVisit>) => {
-      setDb((prev) => ({
-        ...prev,
-        guests: prev.guests.map((g) => (g.id === guestId ? { ...g, ...updates } : g)),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Staf BK',
-          'guest',
-          `Memperbarui data kunjungan tamu.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'GUEST_UPDATE',
+        payload: {
+          guestId,
+          updates,
+          actorName: currentStaff?.nama || 'Staf BK',
+        },
+      });
       pushToast({
         type: 'success',
         title: 'Data Tamu Diperbarui',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const markGuestCompleted = useCallback(
     (guestId: string) => {
       const jamKeluar = getCurrentTimeHHMM();
-      setDb((prev) => {
-        const guest = prev.guests.find((g) => g.id === guestId);
-        return {
-          ...prev,
-          guests: prev.guests.map((g) =>
-            g.id === guestId ? { ...g, status: 'Selesai', jamKeluar } : g
-          ),
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Resepsionis BK',
-            'guest',
-            `Menandai kunjungan ${guest?.namaLengkap || 'Tamu'} (${guest?.nomorAntrean || ''}) selesai pada ${jamKeluar}.`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'GUEST_COMPLETE',
+        payload: {
+          guestId,
+          jamKeluar,
+          actorName: currentStaff?.nama || 'Resepsionis BK',
+        },
       });
       pushToast({
         type: 'success',
@@ -1108,91 +1178,69 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         message: `Jam keluar dicatat pukul ${jamKeluar} WIB.`,
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const completeGuestsBulk = useCallback(
     (guestIds: string[]) => {
       const jamKeluar = getCurrentTimeHHMM();
-      const idSet = new Set(guestIds);
-      setDb((prev) => ({
-        ...prev,
-        guests: prev.guests.map((g) =>
-          idSet.has(g.id) ? { ...g, status: 'Selesai', jamKeluar: g.jamKeluar || jamKeluar } : g
-        ),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Staf BK',
-          'guest',
-          `Menandai ${guestIds.length} kunjungan tamu selesai.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'GUEST_COMPLETE_BULK',
+        payload: {
+          guestIds,
+          jamKeluar,
+          actorName: currentStaff?.nama || 'Staf BK',
+        },
+      });
       pushToast({
         type: 'success',
         title: `${guestIds.length} Kunjungan Ditandai Selesai`,
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const deleteGuests = useCallback(
     (guestIds: string[]) => {
-      const idSet = new Set(guestIds);
-      setDb((prev) => ({
-        ...prev,
-        guests: prev.guests.filter((g) => !idSet.has(g.id)),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Staf BK',
-          'guest',
-          `Menghapus ${guestIds.length} entri log buku tamu.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'GUEST_DELETE_BULK',
+        payload: {
+          guestIds,
+          actorName: currentStaff?.nama || 'Staf BK',
+        },
+      });
       pushToast({
         type: 'info',
         title: `${guestIds.length} Log Tamu Dihapus`,
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const toggleStaffAvailability = useCallback(
     (staffId: string, status: AvailabilityStatus) => {
-      setDb((prev) => ({
-        ...prev,
-        staff: prev.staff.map((g) =>
-          g.id === staffId ? { ...g, statusKetersediaan: status } : g
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'STAFF_TOGGLE_AVAILABILITY',
+        payload: { staffId, status },
+      });
       pushToast({
         type: 'info',
         title: 'Status Ketersediaan Diperbarui',
         message: `Status layanan saat ini: ${status}`,
       });
     },
-    [pushToast]
+    [dispatchSharedAction, pushToast]
   );
 
   const upsertStudent = useCallback(
     (student: Omit<Student, 'id'> & { id?: string }) => {
-      setDb((prev) => {
-        const exists = student.id && prev.students.some((s) => s.id === student.id);
-        const updatedStudents = exists
-          ? prev.students.map((s) =>
-              s.id === student.id ? ({ ...student, id: student.id } as Student) : s
-            )
-          : [{ ...student, id: uid('std') }, ...prev.students];
-
-        return {
-          ...prev,
-          students: updatedStudents,
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Admin',
-            'master',
-            `${exists ? 'Memperbarui' : 'Menambahkan'} data siswa ${student.nama} (${student.kelas}).`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'STUDENT_UPSERT',
+        payload: {
+          student,
+          newId: uid('std'),
+          actorName: currentStaff?.nama || 'Admin',
+        },
       });
       pushToast({
         type: 'success',
@@ -1200,75 +1248,52 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         message: `${student.nama} (${student.kelas}) berhasil disimpan.`,
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const deleteStudent = useCallback(
     (studentId: string) => {
-      setDb((prev) => {
-        const target = prev.students.find((s) => s.id === studentId);
-        return {
-          ...prev,
-          students: prev.students.filter((s) => s.id !== studentId),
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Admin',
-            'master',
-            `Menghapus data siswa ${target?.nama || studentId}.`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'STUDENT_DELETE',
+        payload: {
+          studentId,
+          actorName: currentStaff?.nama || 'Admin',
+        },
       });
       pushToast({
         type: 'info',
         title: 'Data Siswa Dihapus',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const deleteStudentsBulk = useCallback(
     (studentIds: string[]) => {
-      const idSet = new Set(studentIds);
-      setDb((prev) => ({
-        ...prev,
-        students: prev.students.filter((s) => !idSet.has(s.id)),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Admin',
-          'master',
-          `Menghapus ${studentIds.length} data siswa terpilih.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'STUDENT_DELETE_BULK',
+        payload: {
+          studentIds,
+          actorName: currentStaff?.nama || 'Admin',
+        },
+      });
       pushToast({
         type: 'info',
         title: `${studentIds.length} Data Siswa Dihapus`,
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const upsertStaff = useCallback(
     (staffMember: Omit<StaffUser, 'id'> & { id?: string }) => {
-      setDb((prev) => {
-        const exists = staffMember.id && prev.staff.some((g) => g.id === staffMember.id);
-        const updatedStaff = exists
-          ? prev.staff.map((g) =>
-              g.id === staffMember.id
-                ? ({ ...staffMember, id: staffMember.id } as StaffUser)
-                : g
-            )
-          : [...prev.staff, { ...staffMember, id: uid('staff') }];
-
-        return {
-          ...prev,
-          staff: updatedStaff,
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Admin',
-            'master',
-            `${exists ? 'Memperbarui' : 'Menambahkan'} akun ${staffMember.nama}.`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'STAFF_UPSERT',
+        payload: {
+          staffMember,
+          newId: uid('staff'),
+          actorName: currentStaff?.nama || 'Admin',
+        },
       });
       pushToast({
         type: 'success',
@@ -1276,7 +1301,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         message: `${staffMember.nama} berhasil disimpan.`,
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const deleteStaff = useCallback(
@@ -1289,25 +1314,19 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
         return;
       }
-      setDb((prev) => {
-        const target = prev.staff.find((g) => g.id === staffId);
-        return {
-          ...prev,
-          staff: prev.staff.filter((g) => g.id !== staffId),
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Admin',
-            'master',
-            `Menghapus akun Guru BK ${target?.nama || staffId}.`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'STAFF_DELETE',
+        payload: {
+          staffId,
+          actorName: currentStaff?.nama || 'Admin',
+        },
       });
       pushToast({
         type: 'info',
         title: 'Data Guru BK Dihapus',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const deleteStaffBulk = useCallback(
@@ -1321,57 +1340,31 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
         return;
       }
-      const idSet = new Set(safeIds);
-      setDb((prev) => ({
-        ...prev,
-        staff: prev.staff.filter((g) => !idSet.has(g.id)),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Admin',
-          'master',
-          `Menghapus ${safeIds.length} akun Guru BK terpilih.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'STAFF_DELETE_BULK',
+        payload: {
+          staffIds: safeIds,
+          actorName: currentStaff?.nama || 'Admin',
+        },
+      });
       pushToast({
         type: 'info',
         title: `${safeIds.length} Akun Guru BK Dihapus`,
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const importStudents = useCallback(
     (rows: Omit<Student, 'id'>[], mode: 'merge' | 'replace'): number => {
       const withIds: Student[] = rows.map((r) => ({ ...r, id: uid('std') }));
-      setDb((prev) => {
-        if (mode === 'replace') {
-          return {
-            ...prev,
-            students: withIds,
-            activities: appendActivity(
-              prev,
-              currentStaff?.nama || 'Admin',
-              'master',
-              `Mengimpor & mengganti data master siswa (${withIds.length} siswa).`
-            ),
-          };
-        }
-        const existingNis = new Set(prev.students.map((s) => s.nis));
-        const newOnes = withIds.filter((s) => !existingNis.has(s.nis));
-        const updated = prev.students.map((s) => {
-          const match = withIds.find((w) => w.nis === s.nis);
-          return match ? { ...s, ...match, id: s.id } : s;
-        });
-        return {
-          ...prev,
-          students: [...newOnes, ...updated],
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Admin',
-            'master',
-            `Mengimpor ${withIds.length} data siswa (Mode Gabung).`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'STUDENTS_IMPORT',
+        payload: {
+          rows: withIds,
+          mode,
+          actorName: currentStaff?.nama || 'Admin',
+        },
       });
       pushToast({
         type: 'success',
@@ -1380,7 +1373,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       return rows.length;
     },
-    [currentStaff, pushToast, settings.guestQueuePrefix]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const importGuests = useCallback(
@@ -1388,37 +1381,17 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
       rows: Omit<GuestVisit, 'id' | 'nomorAntrean' | 'tanggal' | 'jamMasuk' | 'status'>[],
       mode: 'merge' | 'replace'
     ): number => {
-      const today = getTodayISO();
-      const nowTime = getCurrentTimeHHMM();
-      const rawPrefix = (settings.guestQueuePrefix || 'TM-').trim().toUpperCase();
-      const prefix = rawPrefix.endsWith('-') ? rawPrefix : `${rawPrefix}-`;
-      setDb((prev) => {
-        const baseCount =
-          mode === 'replace' ? 0 : prev.guests.filter((g) => g.tanggal === today).length;
-        const imported: GuestVisit[] = rows.map((r, idx) => ({
-          id: uid('gst'),
-          nomorAntrean: `${prefix}${String(baseCount + idx + 1).padStart(3, '0')}`,
-          namaLengkap: r.namaLengkap,
-          kategori: r.kategori,
-          namaSiswaTerkait: r.namaSiswaTerkait,
-          noWhatsApp: r.noWhatsApp,
-          pihakDituju: r.pihakDituju,
-          keperluan: r.keperluan,
-          tanggal: today,
-          jamMasuk: nowTime,
-          status: 'Berkunjung',
-        }));
-
-        return {
-          ...prev,
-          guests: mode === 'replace' ? imported : [...imported, ...prev.guests],
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Staf BK',
-            'guest',
-            `Mengimpor ${imported.length} log kunjungan buku tamu.`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'GUESTS_IMPORT',
+        payload: {
+          rows,
+          newIds: rows.map(() => uid('gst')),
+          tanggal: getTodayISO(),
+          jamMasuk: getCurrentTimeHHMM(),
+          queuePrefix: settingsRef.current.guestQueuePrefix || 'TM-',
+          mode,
+          actorName: currentStaff?.nama || 'Staf BK',
+        },
       });
       pushToast({
         type: 'success',
@@ -1427,51 +1400,18 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       return rows.length;
     },
-    [currentStaff, pushToast, settings.guestQueuePrefix]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const importFullBackup = useCallback(
     (backupDb: SiBKDatabase, mode: 'merge' | 'replace') => {
-      setDb((prev) => {
-        if (mode === 'replace') {
-          const normalized = normalizeDatabase(backupDb);
-          return {
-            ...normalized,
-            activities: appendActivity(
-              normalized,
-              currentStaff?.nama || 'Admin',
-              'master',
-              'Memulihkan seluruh database dari file cadangan JSON.'
-            ),
-          };
-        }
-        const mergeById = <T extends { id: string }>(curr: T[], incoming: T[]): T[] => {
-          const map = new Map(curr.map((item) => [item.id, item]));
-          incoming.forEach((item) => map.set(item.id, item));
-          return Array.from(map.values());
-        };
-        return {
-          students: mergeById(prev.students, backupDb.students || []),
-          staff: mergeById(prev.staff, backupDb.staff || []),
-          requests: mergeById(prev.requests, backupDb.requests || []),
-          notes: mergeById(prev.notes, backupDb.notes || []),
-          guests: mergeById(prev.guests, backupDb.guests || []),
-          studentAttendances: mergeById(
-            prev.studentAttendances,
-            backupDb.studentAttendances || []
-          ),
-          classAttendances: mergeById(
-            prev.classAttendances,
-            backupDb.classAttendances || []
-          ),
-          chats: mergeById(prev.chats, backupDb.chats || []),
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Admin',
-            'master',
-            'Menggabungkan data cadangan JSON ke database aktif.'
-          ),
-        };
+      dispatchSharedAction({
+        type: 'FULL_BACKUP_IMPORT',
+        payload: {
+          backupDb,
+          mode,
+          actorName: currentStaff?.nama || 'Admin',
+        },
       });
       pushToast({
         type: 'success',
@@ -1482,36 +1422,31 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
             : 'Data backup berhasil digabungkan.',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const resetDemoData = useCallback(() => {
     const fresh = createInitialDatabase();
-    setDb(fresh);
-    localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(fresh));
+    dispatchSharedAction({
+      type: 'DEMO_DATA_RESET',
+      payload: { freshDb: fresh },
+    });
     pushToast({
       type: 'info',
       title: 'Data Simulasi Direset',
-      message: 'Seluruh data dikembalikan ke kondisi awal demo.',
+      message: 'Seluruh data dikembalikan ke kondisi awal demo di semua perangkat.',
     });
-  }, [pushToast]);
+  }, [dispatchSharedAction, pushToast]);
 
   const toggleStudentSecretaryAccess = useCallback(
     (studentId: string, enabled: boolean) => {
-      setDb((prev) => {
-        const target = prev.students.find((s) => s.id === studentId);
-        return {
-          ...prev,
-          students: prev.students.map((s) =>
-            s.id === studentId ? { ...s, isSekretarisKelas: enabled } : s
-          ),
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Guru BK',
-            'attendance',
-            `${enabled ? 'Memberikan' : 'Mencabut'} akses Sekretaris Kelas untuk ${target?.nama || 'Siswa'} (${target?.kelas || '-'}).`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'STUDENT_TOGGLE_SECRETARY',
+        payload: {
+          studentId,
+          enabled,
+          actorName: currentStaff?.nama || 'Guru BK',
+        },
       });
       pushToast({
         type: enabled ? 'success' : 'info',
@@ -1521,7 +1456,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
           : 'Menu Sekretaris Kelas disembunyikan dari portal siswa tersebut.',
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const submitStudentAttendance = useCallback(
@@ -1546,16 +1481,13 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: new Date().toISOString(),
       };
 
-      setDb((prev) => ({
-        ...prev,
-        studentAttendances: [report, ...prev.studentAttendances],
-        activities: appendActivity(
-          prev,
-          `${currentStudent.nama} (${currentStudent.kelas})`,
-          'attendance',
-          `Mengirim info kehadiran (${payload.status})${payload.fotoLampiranDataUrl ? ' beserta foto lampiran' : ''}.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'ATTENDANCE_SUBMIT',
+        payload: {
+          report,
+          actorLabel: `${currentStudent.nama} (${currentStudent.kelas})`,
+        },
+      });
 
       if (settings.enableSoundNotification) {
         playNotificationSound('attendance');
@@ -1568,33 +1500,25 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
     },
-    [currentStudent, pushToast, settings.enableSoundNotification, settings.enableTextNotification]
+    [
+      currentStudent,
+      dispatchSharedAction,
+      pushToast,
+      settings.enableSoundNotification,
+      settings.enableTextNotification,
+    ]
   );
 
   const verifyStudentAttendance = useCallback(
     (reportId: string, statusVerifikasi: AttendanceVerifyStatus, catatanGuru?: string) => {
-      setDb((prev) => {
-        const target = prev.studentAttendances.find((a) => a.id === reportId);
-        const st = prev.students.find((s) => s.id === target?.studentId);
-        return {
-          ...prev,
-          studentAttendances: prev.studentAttendances.map((a) =>
-            a.id === reportId
-              ? {
-                  ...a,
-                  statusVerifikasi,
-                  catatanGuru: catatanGuru?.trim() || a.catatanGuru,
-                  verifiedBy: currentStaff?.nama || 'Guru BK',
-                }
-              : a
-          ),
-          activities: appendActivity(
-            prev,
-            currentStaff?.nama || 'Guru BK',
-            'attendance',
-            `Menandai info kehadiran ${st?.nama || 'Siswa'} sebagai "${statusVerifikasi}".`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'ATTENDANCE_VERIFY',
+        payload: {
+          reportId,
+          statusVerifikasi,
+          catatanGuru,
+          actorName: currentStaff?.nama || 'Guru BK',
+        },
       });
       if (settings.enableSoundNotification) {
         playNotificationSound('sent');
@@ -1605,28 +1529,24 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         message: 'Catatan verifikasi telah dikirim ke portal siswa.',
       });
     },
-    [currentStaff, pushToast, settings.enableSoundNotification]
+    [currentStaff, dispatchSharedAction, pushToast, settings.enableSoundNotification]
   );
 
   const deleteStudentAttendances = useCallback(
     (reportIds: string[]) => {
-      const idSet = new Set(reportIds);
-      setDb((prev) => ({
-        ...prev,
-        studentAttendances: prev.studentAttendances.filter((a) => !idSet.has(a.id)),
-        activities: appendActivity(
-          prev,
-          currentStaff?.nama || 'Guru BK',
-          'attendance',
-          `Menghapus ${reportIds.length} laporan kehadiran siswa.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'ATTENDANCE_DELETE_BULK',
+        payload: {
+          reportIds,
+          actorName: currentStaff?.nama || 'Guru BK',
+        },
+      });
       pushToast({
         type: 'info',
         title: `${reportIds.length} Laporan Kehadiran Dihapus`,
       });
     },
-    [currentStaff, pushToast]
+    [currentStaff, dispatchSharedAction, pushToast]
   );
 
   const saveDailyClassAttendance = useCallback(
@@ -1635,34 +1555,22 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ? `${currentStudent.nama} (Sekretaris Kelas)`
         : currentStaff?.nama || 'Guru BK';
 
-      setDb((prev) => {
-        const existingIndex = prev.classAttendances.findIndex(
-          (c) => c.kelas === kelas && c.tanggal === tanggal
-        );
-        const record: DailyClassAttendance = {
-          id: existingIndex >= 0 ? prev.classAttendances[existingIndex].id : uid('cls-att'),
-          kelas,
-          tanggal,
-          inputByStudentId: currentStudent?.id,
-          inputByName: actorName,
-          entries,
-          updatedAt: new Date().toISOString(),
-        };
-        const updatedList =
-          existingIndex >= 0
-            ? prev.classAttendances.map((c, idx) => (idx === existingIndex ? record : c))
-            : [record, ...prev.classAttendances];
+      const existing = dbRef.current.classAttendances.find(
+        (c) => c.kelas === kelas && c.tanggal === tanggal
+      );
+      const record: DailyClassAttendance = {
+        id: existing?.id || uid('cls-att'),
+        kelas,
+        tanggal,
+        inputByStudentId: currentStudent?.id,
+        inputByName: actorName,
+        entries,
+        updatedAt: new Date().toISOString(),
+      };
 
-        return {
-          ...prev,
-          classAttendances: updatedList,
-          activities: appendActivity(
-            prev,
-            actorName,
-            'attendance',
-            `Menyimpan presensi harian kelas ${kelas} tanggal ${tanggal} (${entries.length} siswa).`
-          ),
-        };
+      dispatchSharedAction({
+        type: 'CLASS_ATTENDANCE_SAVE',
+        payload: { record },
       });
 
       if (settings.enableSoundNotification) {
@@ -1674,7 +1582,13 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         message: `Data kehadiran harian tanggal ${tanggal} berhasil diperbarui.`,
       });
     },
-    [currentStaff, currentStudent, pushToast, settings.enableSoundNotification]
+    [
+      currentStaff,
+      currentStudent,
+      dispatchSharedAction,
+      pushToast,
+      settings.enableSoundNotification,
+    ]
   );
 
   const sendChatMessage = useCallback(
@@ -1710,16 +1624,10 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
         readByStaff: payload.senderRole === 'staff',
       };
 
-      setDb((prev) => ({
-        ...prev,
-        chats: [...prev.chats, newMsg],
-        activities: appendActivity(
-          prev,
-          senderName,
-          'chat',
-          `Mengirim pesan konsultasi ${payload.senderRole === 'student' ? 'ke Guru BK' : 'ke Siswa'}.`
-        ),
-      }));
+      dispatchSharedAction({
+        type: 'CHAT_SEND',
+        payload: { message: newMsg },
+      });
 
       if (settings.enableSoundNotification) {
         playNotificationSound('sent');
@@ -1738,6 +1646,7 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [
       db.staff,
       db.students,
+      dispatchSharedAction,
       pushToast,
       settings.enableSoundNotification,
       settings.enableTextNotification,
@@ -1746,25 +1655,20 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const markChatRead = useCallback(
     (studentId: string, staffId: string, viewerRole: 'student' | 'staff') => {
-      setDb((prev) => {
-        let changed = false;
-        const nextChats = prev.chats.map((c) => {
-          if (c.studentId !== studentId || c.staffId !== staffId) return c;
-          if (viewerRole === 'student' && !c.readByStudent) {
-            changed = true;
-            return { ...c, readByStudent: true };
-          }
-          if (viewerRole === 'staff' && !c.readByStaff) {
-            changed = true;
-            return { ...c, readByStaff: true };
-          }
-          return c;
-        });
-        if (!changed) return prev;
-        return { ...prev, chats: nextChats };
+      const hasUnread = dbRef.current.chats.some(
+        (c) =>
+          c.studentId === studentId &&
+          c.staffId === staffId &&
+          ((viewerRole === 'student' && !c.readByStudent) ||
+            (viewerRole === 'staff' && !c.readByStaff))
+      );
+      if (!hasUnread) return;
+      dispatchSharedAction({
+        type: 'CHAT_MARK_READ',
+        payload: { studentId, staffId, viewerRole },
       });
     },
-    []
+    [dispatchSharedAction]
   );
 
   const testNotificationSound = useCallback(() => {
@@ -1778,7 +1682,8 @@ export const SiBKProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pushToast({
       type: 'info',
       title: played ? 'Tes Notifikasi Suara & Tulisan Berhasil' : 'Notifikasi Tulisan Aktif',
-      message: 'Bunyi lonceng dan banner tulisan akan muncul otomatis saat pesan atau laporan baru masuk.',
+      message:
+        'Bunyi lonceng dan banner tulisan akan muncul otomatis saat pesan atau laporan baru masuk.',
     });
   }, [pushToast, settings.appName, settings.enableBrowserNotification]);
 

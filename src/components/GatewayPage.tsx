@@ -9,22 +9,19 @@ import {
   CheckCircle2,
   Printer,
   ArrowRight,
-  Clock,
-  Users,
   Sparkles,
   RotateCcw,
   QrCode,
   Camera,
 } from 'lucide-react';
 import { useSiBK } from '../context/SiBKContext';
-import { formatTanggalID, getTodayISO } from '../data/seedData';
+import { formatTanggalID } from '../data/seedData';
 import { GuestVisit, VisitorCategory } from '../types/sibk';
 import {
   buildGuestTicketPayload,
   generateQrDataUrl,
   ParsedGuestQrCheckIn,
 } from '../utils/guestQr';
-import { SIBK_THEMES } from '../utils/themeRegistry';
 import { BrandLogo } from './BrandLogo';
 import { GuestQrScannerModal } from './GuestQrScannerModal';
 import { ThemeSwitcher } from './ThemeSwitcher';
@@ -32,7 +29,7 @@ import { ThemeSwitcher } from './ThemeSwitcher';
 type GatewayTab = 'siswa' | 'staff' | 'tamu';
 
 export const GatewayPage: React.FC = () => {
-  const { db, theme, setTheme, settings, loginStudent, loginStaff, registerGuestVisit } =
+  const { db, settings, loginStudent, loginStaff, registerGuestVisit } =
     useSiBK();
   const [activeTab, setActiveTab] = useState<GatewayTab>(() => settings.defaultGatewayTab || 'siswa');
 
@@ -66,12 +63,6 @@ export const GatewayPage: React.FC = () => {
   const [qrScannerOpen, setQrScannerOpen] = useState(false);
   const [ticketQrUrl, setTicketQrUrl] = useState<string>('');
   const [qrAutoFilledNotice, setQrAutoFilledNotice] = useState<string>('');
-
-  const today = getTodayISO();
-  const availableCounselors = db.staff.filter(
-    (s) => s.statusKetersediaan === 'Tersedia'
-  ).length;
-  const todayGuestCount = db.guests.filter((g) => g.tanggal === today).length;
 
   const handleStudentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,13 +151,21 @@ export const GatewayPage: React.FC = () => {
     setQrAutoFilledNotice('');
   };
 
+  const liveIssuedTicket = React.useMemo(
+    () =>
+      issuedTicket
+        ? db.guests.find((g) => g.id === issuedTicket.id) || issuedTicket
+        : null,
+    [db.guests, issuedTicket]
+  );
+
   React.useEffect(() => {
-    if (!issuedTicket) {
+    if (!liveIssuedTicket) {
       setTicketQrUrl('');
       return;
     }
     let cancelled = false;
-    generateQrDataUrl(buildGuestTicketPayload(issuedTicket))
+    generateQrDataUrl(buildGuestTicketPayload(liveIssuedTicket))
       .then((url) => {
         if (!cancelled) setTicketQrUrl(url);
       })
@@ -176,7 +175,7 @@ export const GatewayPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [issuedTicket]);
+  }, [liveIssuedTicket]);
 
   const handleQrCheckInParsed = (data: ParsedGuestQrCheckIn, autoSubmit: boolean) => {
     const matchedTarget =
@@ -258,132 +257,11 @@ export const GatewayPage: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content — Focused Login & Access Card */}
       <main className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-10">
-        <div
-          className={`${
-            settings.showHeroShowcase ? 'max-w-6xl grid-cols-1 lg:grid-cols-12' : 'max-w-2xl grid-cols-1'
-          } w-full grid bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-xl shadow-slate-900/5 overflow-hidden`}
-        >
-          {/* Left Colorful Gradient Showcase Panel */}
-          {settings.showHeroShowcase && (
-          <div className="no-print lg:col-span-5 sibk-gradient-hero text-white p-8 sm:p-10 flex flex-col justify-between relative overflow-hidden">
-            <div
-              className="absolute inset-0 opacity-20 pointer-events-none"
-              style={{
-                backgroundImage:
-                  'radial-gradient(circle at 15% 15%, rgba(255,255,255,0.45) 0%, transparent 45%), radial-gradient(circle at 85% 85%, rgba(255,255,255,0.3) 0%, transparent 40%)',
-              }}
-            />
-
-            <div className="relative z-10">
-              <p className="text-xs font-semibold text-white/85 tracking-wide mb-3">
-                {settings.heroBadge}
-              </p>
-              <h1 className="font-display text-2xl sm:text-3xl font-bold leading-tight text-white [text-wrap:balance]">
-                {settings.heroTitle}
-              </h1>
-              <p className="mt-4 text-sm text-white/90 leading-relaxed">
-                {settings.heroDescription}
-              </p>
-
-              <div className="mt-7 space-y-3.5 border-t border-white/20 pt-6">
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur-xs text-white flex items-center justify-center shrink-0 mt-0.5">
-                    <GraduationCap className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-semibold text-white">Portal Pengajuan Siswa</h2>
-                    <p className="text-xs text-white/80 mt-0.5">
-                      Ajukan konseling pribadi, belajar, karir, atau mediasi secara aman.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur-xs text-white flex items-center justify-center shrink-0 mt-0.5">
-                    <UserCheck className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-semibold text-white">Manajemen Data & Rekam Jejak</h2>
-                    <p className="text-xs text-white/80 mt-0.5">
-                      Seleksi massal, edit, hapus, ekspor CSV/JSON, serta impor data cepat.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur-xs text-white flex items-center justify-center shrink-0 mt-0.5">
-                    <BookOpenCheck className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-semibold text-white">Buku Tamu Digital Instan</h2>
-                    <p className="text-xs text-white/80 mt-0.5">
-                      Check-in wali murid & tamu instansi dengan kartu antrean siap cetak.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Theme Palette Strip + Live Stats */}
-            <div className="relative z-10 mt-8 pt-6 border-t border-white/20 space-y-5">
-              <div>
-                <p className="text-[11px] font-semibold text-white/80 mb-2">
-                  Ganti Tema Warna Cepat
-                </p>
-                <div className="flex items-center gap-2">
-                  {SIBK_THEMES.map((t) => {
-                    const active = t.id === theme;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => setTheme(t.id)}
-                        title={t.name}
-                        aria-label={`Pilih tema ${t.name}`}
-                        className={`w-8 h-8 rounded-xl transition-transform ${
-                          active
-                            ? 'ring-2 ring-white scale-110 shadow-md'
-                            : 'opacity-80 hover:opacity-100 hover:scale-105'
-                        }`}
-                        style={{
-                          background: `linear-gradient(135deg, ${t.swatchColors[0]}, ${t.swatchColors[1]}, ${t.swatchColors[2]})`,
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-
-              {settings.showStatsOnGateway && (
-                <div className="grid grid-cols-2 gap-4 pt-2 border-t border-white/15">
-                  <div>
-                    <div className="flex items-center gap-1.5 text-xs text-white/80">
-                      <Users className="w-3.5 h-3.5" />
-                      <span>Guru BK Tersedia</span>
-                    </div>
-                    <p className="mt-1 text-xl font-bold font-mono-tabular text-white">
-                      {availableCounselors} / {db.staff.length}
-                    </p>
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-1.5 text-xs text-white/80">
-                      <Clock className="w-3.5 h-3.5" />
-                      <span>Tamu Hari Ini</span>
-                    </div>
-                    <p className="mt-1 text-xl font-bold font-mono-tabular text-white">
-                      {todayGuestCount} Kunjungan
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-          )}
-
-          {/* Right Interactive Tab Panel */}
-          <div className={`${settings.showHeroShowcase ? 'lg:col-span-7' : ''} p-6 sm:p-10 flex flex-col justify-between bg-white dark:bg-slate-900`}>
+        <div className="max-w-2xl w-full bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-xl shadow-slate-900/5 overflow-hidden">
+          {/* Interactive Tab Panel */}
+          <div className="p-6 sm:p-10 flex flex-col justify-between bg-white dark:bg-slate-900">
             <div>
               {/* Segmented Tabs */}
               <div
@@ -853,7 +731,7 @@ export const GatewayPage: React.FC = () => {
               )}
 
               {/* TAB 3 RESULT: KARTU BUKTI KUNJUNGAN DIGITAL */}
-              {activeTab === 'tamu' && issuedTicket && (
+              {activeTab === 'tamu' && liveIssuedTicket && (
                 <div className="print-container">
                   <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/30 p-6">
                     <div className="flex items-start justify-between gap-4 border-b border-emerald-200/70 dark:border-emerald-800/60 pb-4">
@@ -874,7 +752,7 @@ export const GatewayPage: React.FC = () => {
                           <div className="bg-white rounded-xl p-1.5 border border-emerald-200 shadow-xs text-center">
                             <img
                               src={ticketQrUrl}
-                              alt={`QR Antrean ${issuedTicket.nomorAntrean}`}
+                              alt={`QR Antrean ${liveIssuedTicket.nomorAntrean}`}
                               className="w-16 h-16 object-contain"
                             />
                           </div>
@@ -884,7 +762,7 @@ export const GatewayPage: React.FC = () => {
                             Nomor Antrean
                           </span>
                           <span className="font-mono-tabular text-2xl font-bold text-emerald-700 dark:text-emerald-400">
-                            {issuedTicket.nomorAntrean}
+                            {liveIssuedTicket.nomorAntrean}
                           </span>
                         </div>
                       </div>
@@ -896,7 +774,7 @@ export const GatewayPage: React.FC = () => {
                           Nama Pengunjung
                         </span>
                         <span className="font-semibold text-slate-900 dark:text-white">
-                          {issuedTicket.namaLengkap}
+                          {liveIssuedTicket.namaLengkap}
                         </span>
                       </div>
                       <div>
@@ -904,7 +782,7 @@ export const GatewayPage: React.FC = () => {
                           Kategori
                         </span>
                         <span className="font-semibold text-slate-900 dark:text-white">
-                          {issuedTicket.kategori}
+                          {liveIssuedTicket.kategori}
                         </span>
                       </div>
                       <div>
@@ -912,7 +790,7 @@ export const GatewayPage: React.FC = () => {
                           Tanggal & Jam Masuk
                         </span>
                         <span className="font-mono-tabular font-semibold text-slate-900 dark:text-white">
-                          {formatTanggalID(issuedTicket.tanggal)} · {issuedTicket.jamMasuk} WIB
+                          {formatTanggalID(liveIssuedTicket.tanggal)} · {liveIssuedTicket.jamMasuk} WIB
                         </span>
                       </div>
                       <div>
@@ -920,16 +798,16 @@ export const GatewayPage: React.FC = () => {
                           No. WhatsApp
                         </span>
                         <span className="font-mono-tabular font-semibold text-slate-900 dark:text-white">
-                          {issuedTicket.noWhatsApp}
+                          {liveIssuedTicket.noWhatsApp}
                         </span>
                       </div>
-                      {issuedTicket.namaSiswaTerkait && (
+                      {liveIssuedTicket.namaSiswaTerkait && (
                         <div className="col-span-2">
                           <span className="block text-xs text-slate-500 dark:text-slate-400">
                             Siswa Terkait
                           </span>
                           <span className="font-semibold text-slate-900 dark:text-white">
-                            {issuedTicket.namaSiswaTerkait}
+                            {liveIssuedTicket.namaSiswaTerkait}
                           </span>
                         </div>
                       )}
@@ -938,7 +816,7 @@ export const GatewayPage: React.FC = () => {
                           Pihak / Guru BK Dituju
                         </span>
                         <span className="font-semibold text-emerald-700 dark:text-emerald-400">
-                          {issuedTicket.pihakDituju}
+                          {liveIssuedTicket.pihakDituju}
                         </span>
                       </div>
                       <div className="col-span-2">
@@ -946,7 +824,7 @@ export const GatewayPage: React.FC = () => {
                           Uraian Kepentingan
                         </span>
                         <p className="text-slate-800 dark:text-slate-200 text-xs mt-0.5 leading-relaxed">
-                          {issuedTicket.keperluan}
+                          {liveIssuedTicket.keperluan}
                         </p>
                       </div>
                     </div>

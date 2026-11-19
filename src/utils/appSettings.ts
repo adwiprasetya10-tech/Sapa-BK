@@ -1,4 +1,4 @@
-import { AppSettings } from '../types/sibk';
+import type { AppSettings } from '../types/sibk.ts';
 
 export const SETTINGS_STORAGE_KEY = 'sibk_settings_v1';
 export const PRINT_CONFIG_STORAGE_KEY = 'sibk_print_config_v1';
@@ -20,7 +20,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   showStudentTab: true,
   showStaffTab: true,
   showGuestTab: true,
-  showHeroShowcase: true,
+  showHeroShowcase: false,
   heroBadge: 'Gerbang Layanan Terpadu Sekolah',
   heroTitle: 'Ruang Aman Konseling & Pelayanan Tamu Digital',
   heroDescription:
